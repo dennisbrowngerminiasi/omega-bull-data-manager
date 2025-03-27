@@ -40,3 +40,10 @@ class StockData:
         for data_dict in data_list:
             data_dict['Ticker'] = self.ticker
         return data_list
+
+    def print_last_candle_open_close_volume(self):
+        last_row = self.df.tail(1)
+        last_closing = last_row['Close'].item()
+        last_opening = last_row['Open'].item()
+        last_volume = last_row['Volume'].item()
+        print(f"Ticker {self.ticker} - Last Closing: {last_closing}, Last Opening: {last_opening}, Last Volume: {last_volume}")

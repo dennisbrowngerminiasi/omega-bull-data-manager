@@ -47,15 +47,18 @@ class Server(StockDataInterface):
                 print(f"Accepted connection from {client_address}")
 
                 if self.waiting_for_downloading_data:
-                    client_socket.sendall("Data is being downloaded. Please wait.".encode('utf-8'))
+                    client_socket.sendall("Server is busy downloading data. Please wait.".encode('utf-8'))
+                    print("Server is busy downloading data. Please wait." + str(client_address))
                     client_socket.close()
                     continue
                 else:
                     # Send data in smaller chunks
+                    print("Sending data to client: " + str(client_address))
                     for i in range(0, len(self.package_load), 262144):
                         client_socket.sendall(self.package_load[i:i+262144])
                         time.sleep(0.025)
                     client_socket.close()
+                    print("Data sent to client: " + str(client_address))
 
             client_socket.close()
             server_socket.close()

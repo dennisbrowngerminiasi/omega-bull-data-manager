@@ -26,9 +26,8 @@ class SharedMemoryManager(StockDataInterface):
                 stock_data_dict = stock_data.__dict__
                 key = f'stock_{i}'
                 self.shared_dict[key] = stock_data_dict
-                print(f'Key: {key}, Value: {stock_data_dict}')  # Print the key and value
-                print(f'Written: Stock data for {stock_data.ticker}')
             self.lock.release()  # Release the lock
+            print("finished writing data to shared memory")
         except Exception as e:
             print(f"Error while writing data to shared memory: {e}")
             self.lock.release()  # Release the lock in case of an error

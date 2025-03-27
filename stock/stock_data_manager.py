@@ -1,6 +1,7 @@
 import threading
 import time
 from datetime import datetime
+from tqdm import tqdm
 
 from stock.stock_data import StockData
 from stock.etoro_tickers import EToroTickers
@@ -18,7 +19,9 @@ class StockDataManager:
         self.stock_data_list = []
         self.etoro_tickers_list = EToroTickers().list
         self.stop_event = threading.Event()
-        self.downloader_thread = threading.Thread(target=self.downloader_agent, args=(60 * 60,))
+        self.downloader_thread = threading.Thread(target=self.downloader_agent, args=(60 * 60 * 60,))
+
+        #TODO: share the data via http passing a json file??
 
     def register_listener(self, listener):
         print("Registering listener" + str(listener))
@@ -30,12 +33,20 @@ class StockDataManager:
 
     def download_stock_data(self, stock_symbols_list):
         self.stock_data_list = []
-        for stock_symbol in stock_symbols_list:
-            stock_data = StockData(start_date, cur_date, end_date, period, stock_symbol)
-            if not stock_data.is_data_empty() and stock_data.are_all_data_present():
-                self.stock_data_list.append(stock_data)
-            else:
-                print(f"No valid data for {stock_symbol}")
+        for stock_symbol in tqdm(stock_symbols_list, desc="Downloading stock data"):
+            try:
+                stock_data = StockData(start_date, cur_date, end_date, period, stock_symbol)
+                if not stock_data.is_data_empty() and stock_data.are_all_data_present():
+                    self.stock_data_list.append(stock_data)
+                    stock_data.print_last_candle_open_close_volume()
+                    tqdm.write(f"Downloaded data for {stock_symbol}")
+                    tqdm.write(f"Ticker {stock_symbol} - Last Closing: {stock_data.df['Close'].iloc[-1]}, Last Opening: {stock_data.df['Open'].iloc[-1]}, Last Volume: {stock_data.df['Volume'].iloc[-1]}")
+                else:
+                    tqdm.write(f"No valid data for {stock_symbol}")
+            except ValueError as e:
+                tqdm.write(f"Failed to download data for {stock_symbol}: {e}")
+            except Exception as e:
+                tqdm.write(f"An unexpected error occurred for {stock_symbol}: {e}")
 
     def notify_listeners_on_download_finished(self):
         print("Notifying listeners on download finished")
