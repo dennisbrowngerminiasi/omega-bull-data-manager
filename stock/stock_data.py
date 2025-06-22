@@ -1,32 +1,53 @@
+from ib_insync import *
 import pandas as pd
-import yfinance
 
 
 class StockData:
-    def __init__(self, start_date, cur_date, end_date, period, ticker):
+    def __init__(self, start_date, cur_date, end_date, period, ticker, ibkr_client):
         self.start_date = start_date
         self.cur_date = cur_date
         self.end_date = end_date
-        self.period = period
+        self.period = period  # e.g., "30 D", "1 Y", etc.
         self.ticker = ticker
+        self.ibkr_client = ibkr_client
         self.df = None
+        self.ib = IB()
         self.download_market_data()
 
     def download_market_data(self):
         try:
-            ticker = yfinance.Ticker(self.ticker)
-            self.df = ticker.history(interval=self.period, start=self.start_date, end=self.end_date)
-            self.df.columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Dividends', 'Stock Splits']
-            # Check if NA values are in data
+
+            # Create stock contract with SMART routing
+            contract = Stock(self.ticker.upper(), 'SMART', 'USD')
+
+            # Fetch historical data
+            bars = self.ibkr_client.reqHistoricalData(
+                contract,
+                endDateTime='',
+                durationStr='1 D',
+                barSizeSetting='1 day',
+                whatToShow='TRADES',
+                useRTH=True,
+                formatDate=1
+            )
+
+            for bar in bars:
+                print(
+                    f"{bar.date} | Open: {bar.open} | High: {bar.high} | Low: {bar.low} | Close: {bar.close} | Volume: {bar.volume}")
+
+            # Convert to DataFrame
+            self.df = util.df(bars)
+            self.df = self.df[['date', 'open', 'high', 'low', 'close', 'volume']]
+            self.df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
             self.df = self.df[self.df['Volume'] != 0]
-            self.df.reset_index(inplace=True)
-            self.df['Date'] = pd.to_datetime(self.df['Date'])  # Convert 'Date' column to datetime
-            self.df.isna().sum()
+            self.df.reset_index(drop=True, inplace=True)
+            self.df['Date'] = pd.to_datetime(self.df['Date'])
+
             print(f"Downloaded data for {self.ticker}")
+
         except Exception as e:
             print(f"Failed to download data for {self.ticker}: {str(e)}")
             self.df = None
-            return {"error": f"Failed to download data for {self.ticker}: {str(e)}"}
 
     def is_data_empty(self):
         return self.df is None
@@ -35,7 +56,7 @@ class StockData:
         return not self.df.isna().sum().any()
 
     def to_list(self):
-        self.df['Date'] = self.df['Date'].dt.strftime('%Y-%m-%d')  # Convert 'Date' column to string format
+        self.df['Date'] = self.df['Date'].dt.strftime('%Y-%m-%d')  # Format date as string
         data_list = self.df.to_dict('records')
         for data_dict in data_list:
             data_dict['Ticker'] = self.ticker
@@ -46,4 +67,5 @@ class StockData:
         last_closing = last_row['Close'].item()
         last_opening = last_row['Open'].item()
         last_volume = last_row['Volume'].item()
-        print(f"Ticker {self.ticker} - Last Closing: {last_closing}, Last Opening: {last_opening}, Last Volume: {last_volume}")
+        print(f"Ticker {self.ticker} - Last Closing: {last_closing}, "
+              f"Last Opening: {last_opening}, Last Volume: {last_volume}")

@@ -20,6 +20,7 @@ class SharedMemoryManager(StockDataInterface):
 
     def write_data(self, stock_data_list):
         try:
+            print("Writing data to shared memory----------------------------------------------@@@@@@@")
             self.lock.acquire()  # Acquire the lock
             for i, stock_data in enumerate(stock_data_list):
                 # Convert the StockData object to a dictionary before storing
