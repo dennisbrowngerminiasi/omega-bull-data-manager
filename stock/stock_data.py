@@ -16,11 +16,8 @@ class StockData:
 
     def download_market_data(self):
         try:
-
-            # Create stock contract with SMART routing
             contract = Stock(self.ticker.upper(), 'SMART', 'USD')
 
-            # Fetch historical data
             bars = self.ibkr_client.reqHistoricalData(
                 contract,
                 endDateTime='',
@@ -35,7 +32,6 @@ class StockData:
                 print(
                     f"{bar.date} | Open: {bar.open} | High: {bar.high} | Low: {bar.low} | Close: {bar.close} | Volume: {bar.volume}")
 
-            # Convert to DataFrame
             self.df = util.df(bars)
             self.df = self.df[['date', 'open', 'high', 'low', 'close', 'volume']]
             self.df.columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
@@ -69,3 +65,22 @@ class StockData:
         last_volume = last_row['Volume'].item()
         print(f"Ticker {self.ticker} - Last Closing: {last_closing}, "
               f"Last Opening: {last_opening}, Last Volume: {last_volume}")
+
+    def to_serializable_dict(self):
+        """Prepares the object for writing to shared memory (avoids pickling errors)."""
+        if self.df is not None:
+            df_serializable = self.df.copy()
+            if 'Date' in df_serializable.columns:
+                df_serializable['Date'] = df_serializable['Date'].astype(str)  # ✅ Critical Fix
+            df_records = df_serializable.to_dict(orient="records")
+        else:
+            df_records = None
+
+        return {
+            "ticker": self.ticker,
+            "start_date": self.start_date,
+            "cur_date": self.cur_date,
+            "end_date": self.end_date,
+            "period": self.period,
+            "df": df_records
+        }

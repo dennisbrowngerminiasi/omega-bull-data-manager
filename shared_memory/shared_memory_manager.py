@@ -21,14 +21,15 @@ class SharedMemoryManager(StockDataInterface):
     def write_data(self, stock_data_list):
         try:
             print("Writing data to shared memory----------------------------------------------@@@@@@@")
-            self.lock.acquire()  # Acquire the lock
+            self.lock.acquire()
+
             for i, stock_data in enumerate(stock_data_list):
-                # Convert the StockData object to a dictionary before storing
-                stock_data_dict = stock_data.__dict__
                 key = f'stock_{i}'
-                self.shared_dict[key] = stock_data_dict
-            self.lock.release()  # Release the lock
+                self.shared_dict[key] = stock_data.to_serializable_dict()
+
+            self.lock.release()
             print("finished writing data to shared memory")
         except Exception as e:
             print(f"Error while writing data to shared memory: {e}")
-            self.lock.release()  # Release the lock in case of an error
+            self.lock.release()
+
