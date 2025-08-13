@@ -28,8 +28,13 @@ class SharedMemoryManager(StockDataInterface):
             print("Writing data to shared memory----------------------------------------------@@@@@@@")
             self.lock.acquire()
 
-            for i, stock_data in enumerate(stock_data_list):
-                key = f'stock_{i}'
+            # Use the actual ticker symbol as the key in shared memory so clients
+            # can access stock data by the expected ticker name instead of a
+            # generated index like "stock_0".  This ensures the shared memory
+            # keys accurately reflect the underlying data and matches the
+            # expectations of consumers of this module.
+            for stock_data in stock_data_list:
+                key = stock_data.ticker
                 self.shared_dict[key] = stock_data.to_serializable_dict()
 
                 try:
