@@ -1,14 +1,14 @@
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from ib_insync import IB
 from stock.stock_data import StockData
 from stock.etoro_tickers import EToroTickers
 
-start_date = "2019-10-01"
 cur_date = datetime.now()
+start_date = (cur_date - timedelta(days=365)).strftime("%Y-%m-%d")
 cur_date_db = cur_date
 end_date = cur_date
-period = "1d"
+period = "1 D"
 
 
 class StockDataManager:

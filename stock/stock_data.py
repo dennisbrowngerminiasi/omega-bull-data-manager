@@ -18,10 +18,20 @@ class StockData:
         try:
             contract = Stock(self.ticker.upper(), 'SMART', 'USD')
 
+            # Request all available historical data between the configured start
+            # and end dates instead of just a single day. This ensures both the
+            # shared memory payload and the persisted CSV contain the full
+            # dataset for each ticker.
+            start_dt = pd.to_datetime(self.start_date)
+            end_dt = pd.to_datetime(self.end_date)
+            duration_days = (end_dt - start_dt).days
+            duration_str = f"{duration_days} D"
+            end_date_str = end_dt.strftime("%Y%m%d %H:%M:%S")
+
             bars = self.ibkr_client.reqHistoricalData(
                 contract,
-                endDateTime='',
-                durationStr='1 D',
+                endDateTime=end_date_str,
+                durationStr=duration_str,
                 barSizeSetting='1 day',
                 whatToShow='TRADES',
                 useRTH=True,
