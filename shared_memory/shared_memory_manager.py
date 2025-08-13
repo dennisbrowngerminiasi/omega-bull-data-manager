@@ -1,5 +1,10 @@
+from pathlib import Path
 from stock.stock_data import StockData
 from stock.stock_data_interface import StockDataInterface
+
+
+CSV_DATA_DIR = Path(__file__).resolve().parent.parent / "shared_data_csv"
+CSV_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class SharedMemoryManager(StockDataInterface):
@@ -20,14 +25,23 @@ class SharedMemoryManager(StockDataInterface):
 
     def write_data(self, stock_data_list):
         try:
-            self.lock.acquire()  # Acquire the lock
+            print("Writing data to shared memory----------------------------------------------@@@@@@@")
+            self.lock.acquire()
+
             for i, stock_data in enumerate(stock_data_list):
-                # Convert the StockData object to a dictionary before storing
-                stock_data_dict = stock_data.__dict__
                 key = f'stock_{i}'
-                self.shared_dict[key] = stock_data_dict
-            self.lock.release()  # Release the lock
+                self.shared_dict[key] = stock_data.to_serializable_dict()
+
+                try:
+                    if stock_data.df is not None:
+                        csv_path = CSV_DATA_DIR / f"{stock_data.ticker}.csv"
+                        stock_data.df.to_csv(csv_path, index=False)
+                except Exception as csv_error:
+                    print(f"Error while saving CSV for {stock_data.ticker}: {csv_error}")
+
+            self.lock.release()
             print("finished writing data to shared memory")
         except Exception as e:
             print(f"Error while writing data to shared memory: {e}")
-            self.lock.release()  # Release the lock in case of an error
+            self.lock.release()
+
