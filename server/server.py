@@ -99,13 +99,16 @@ class Server(StockDataInterface):
         server_socket = None
         try:
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_socket.settimeout(300.0)
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             server_socket.bind((host, port))
-            server_socket.listen(1)
+            server_socket.listen()
             print("Server is listening for connections...")
 
             while True:
-                client_socket, client_address = server_socket.accept()
+                try:
+                    client_socket, client_address = server_socket.accept()
+                except KeyboardInterrupt:  # allow graceful shutdown
+                    break
                 print(f"Accepted connection from {client_address}")
 
                 if self.waiting_for_downloading_data:
