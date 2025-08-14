@@ -14,14 +14,14 @@ class Server(StockDataInterface):
     supported commands.
     """
 
-    def __init__(self, stock_data_manager):
+    def __init__(self, stock_data_manager, host: str = "0.0.0.0", port: int = 12345):
         # Ensure we wait for data to be downloaded before answering requests
         self.waiting_for_downloading_data = True
         self.package_load = None
         self.stock_data_manager = stock_data_manager
         self.stock_data_manager.register_listener(self)
         self.stock_data_manager.start_downloader_agent()
-        self.start_server()
+        self.start_server(host, port)
 
     # ------------------------------------------------------------------
     # Callbacks from ``StockDataManager``
@@ -84,12 +84,23 @@ class Server(StockDataInterface):
     # ------------------------------------------------------------------
     # Server loop
     # ------------------------------------------------------------------
-    def start_server(self):
+    def start_server(self, host: str = "0.0.0.0", port: int = 12345):
+        """Start the TCP server loop.
+
+        Parameters
+        ----------
+        host: str, optional
+            Interface to bind to. Defaults to ``"0.0.0.0"`` so the server is
+            reachable from other machines and containers.
+        port: int, optional
+            Port to listen on. Defaults to ``12345``.
+        """
+
         server_socket = None
         try:
             server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server_socket.settimeout(300.0)
-            server_socket.bind(("localhost", 12345))
+            server_socket.bind((host, port))
             server_socket.listen(1)
             print("Server is listening for connections...")
 
