@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from threading import Lock
 
 from shared_memory.shared_memory_manager import SharedMemoryManager
@@ -8,6 +9,7 @@ from quote_server import NDJSONServer
 
 def run():
     """Initialize shared memory and launch the NDJSON quote server."""
+    logging.basicConfig(level=logging.INFO)
     stock_data_manager = StockDataManager()
     lock = Lock()
     shared_dict = {}

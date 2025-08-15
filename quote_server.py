@@ -1,8 +1,12 @@
 import asyncio
 import json
 import argparse
+import logging
 import time
 from typing import Dict, Any
+
+
+logger = logging.getLogger(__name__)
 
 
 class NDJSONServer:
@@ -23,10 +27,14 @@ class NDJSONServer:
     # ------------------------------------------------------------------
     async def start(self, host: str = "0.0.0.0", port: int = 12345):
         """Start the TCP server and return the server instance."""
-        return await asyncio.start_server(self.handle_client, host, port)
+        server = await asyncio.start_server(self.handle_client, host, port)
+        logger.info("NDJSON quote server listening on %s:%d", host, port)
+        return server
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Handle a single client connection."""
+        peer = writer.get_extra_info("peername")
+        logger.info("Client connected: %s", peer)
         try:
             while True:
                 try:
@@ -43,7 +51,9 @@ class NDJSONServer:
                     await self.send_error(writer, None, "BAD_REQUEST", "Line too long")
                     continue
                 try:
-                    request = json.loads(line.decode("utf-8"))
+                    decoded = line.decode("utf-8").rstrip()
+                    logger.info("recv: %s", decoded)
+                    request = json.loads(decoded)
                 except Exception:
                     await self.send_error(writer, None, "BAD_REQUEST", "Malformed JSON")
                     continue
@@ -66,6 +76,7 @@ class NDJSONServer:
                     continue
 
                 req_type = request["type"]
+                logger.info("handling request id=%s type=%s", req_id, req_type)
                 start = time.time()
                 try:
                     if req_type == "list_tickers":
@@ -102,6 +113,7 @@ class NDJSONServer:
                 finally:
                     _ = int((time.time() - start) * 1000)  # latency placeholder
         finally:
+            logger.info("Client disconnected: %s", peer)
             writer.close()
             await writer.wait_closed()
 
@@ -109,12 +121,14 @@ class NDJSONServer:
     # Serialization helpers
     # ------------------------------------------------------------------
     async def send(self, writer: asyncio.StreamWriter, message: Dict[str, Any]):
+        logger.info("send: %s", message)
         writer.write(json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n")
         await writer.drain()
 
     async def send_error(self, writer: asyncio.StreamWriter, req_id: Any, code: str, message: str):
         error_obj = {"v": 1, "id": req_id, "type": "error",
                      "error": {"code": code, "message": message}}
+        logger.warning("error: %s", error_obj)
         await self.send(writer, error_obj)
 
 
@@ -124,6 +138,7 @@ def _parse_listen(listen: str):
 
 
 def main():  # pragma: no cover - CLI helper
+    logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser(description="NDJSON quote server")
     parser.add_argument("--listen", default="0.0.0.0:12345")
     parser.add_argument("--freshness-window-ms", type=int, default=90_000)
