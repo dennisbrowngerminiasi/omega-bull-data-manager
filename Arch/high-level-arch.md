@@ -25,6 +25,64 @@ writer increments the epoch before and after updating an entry, leaving an even
 value when the data is stable.  Readers verify the epoch is unchanged and even
 before consuming a snapshot, ensuring they never observe torn writes.
 
+### Layout and Write Protocol
+
+Shared memory is represented by a process-safe dictionary where each key is the
+stock's ticker symbol.  Each value contains two top-level fields:
+
+```
+{
+  "header": {
+    "version": 1,
+    "epoch": <u64>,
+    "last_update_ms": <u64>,
+    "writer_pid": <u32>
+  },
+  "data": <serialized OHLCV history>
+}
+```
+
+The data manager's `write_data` method performs the following steps:
+
+1. Acquire a global lock and bump the global snapshot `epoch` to an **odd**
+   number to signal that updates are in progress.
+2. For each ticker:
+   - Create or fetch its entry from the dictionary.
+   - Increment the entry's `epoch` to an odd value.
+   - Store the latest historical data and update `last_update_ms`.
+   - Increment the `epoch` again, making it even and therefore stable.
+   - Publish a condensed quote into the in-memory `quote_cache` so the TCP
+     server can serve `get_quote` without touching shared memory.
+3. After all tickers are processed, update the global `last_update_ms`, bump
+   the global `epoch` to the next even value, and release the lock.
+
+This seqlock pattern guarantees readers either see a fully written snapshot or
+retry until one is available.
+
+### Client Read Protocol
+
+Clients that need historical bars may attach to the shared dictionary directly
+and read using the same seqlock fields.  A minimal reader can follow this
+algorithm:
+
+```
+def read_ticker(shared_dict, ticker):
+    while True:
+        entry = shared_dict[ticker]
+        e1 = entry["header"]["epoch"]
+        if e1 % 2:  # writer in progress
+            continue
+        data = entry["data"]
+        e2 = entry["header"]["epoch"]
+        if e1 == e2 and e2 % 2 == 0:
+            return data  # consistent snapshot
+```
+
+The global snapshot state (`snapshot_state`) exposes the latest `epoch` and
+`last_update_ms` and can be polled to detect when new data arrives.  For point
+quotes and discovery, clients should prefer the NDJSON server which reads from
+the in-memory `quote_cache` and avoids seqlock coordination entirely.
+
 ## Data Flow
 
 1. The data manager downloads new bars and updates shared memory entries.
