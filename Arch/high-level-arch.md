@@ -36,3 +36,11 @@ before consuming a snapshot, ensuring they never observe torn writes.
 
 This separation keeps historical data in shared memory while enabling fast,
 thread-safe quote retrieval over the network.
+
+## Example Client
+
+See `utils/client_example.py` for a minimal example of how to interact with
+the NDJSON quote server.  Every request must include the protocol version `v`,
+an `id` chosen by the client, and a `type` describing the operation.  Omitting
+any of these fields will result in a `BAD_REQUEST` error such as "Missing
+required fields".
