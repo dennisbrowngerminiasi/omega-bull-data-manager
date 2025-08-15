@@ -4,6 +4,10 @@ from stock.stock_data_manager import StockDataManager
 from shared_memory.shared_dict_manager import SharedDictManager, get_shared_dict
 
 if __name__ == "__main__":
+    print(
+        "WARNING: shared-dict interface is deprecated and will be removed after 2025-01-01",
+        flush=True,
+    )
     stock_data_manager = StockDataManager()
     lock = Lock()  # Create a Lock object
     manager = Manager()  # Create a Manager object
