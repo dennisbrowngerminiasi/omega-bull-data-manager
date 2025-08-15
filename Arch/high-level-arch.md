@@ -52,6 +52,23 @@ an `id` chosen by the client, and a `type` describing the operation.  Omitting
 any of these fields will result in a `BAD_REQUEST` error such as "Missing
 required fields".
 
+## Client-Side Smoke Tests
+
+For validating a deployment, a set of client-side smoke tests lives in
+`utils/smoke_tests`.  The script exercises all public endpoints and common error
+paths against a running server to ensure the full request/response cycle works
+as expected:
+
+- `list_tickers`
+- `get_quote`
+- `get_snapshot_epoch`
+- `get_quote` with an unknown ticker (expecting `NOT_FOUND`)
+- a request missing required fields (expecting `BAD_REQUEST`)
+
+Run the tests with::
+
+    python utils/smoke_tests/run_smoke_tests.py
+
 ## Protocol and Logging Details
 
 The TCP service speaks [NDJSON](https://ndjson.org/): each line is a single
