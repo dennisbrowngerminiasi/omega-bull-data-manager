@@ -1,0 +1,143 @@
+import asyncio
+import json
+import argparse
+import time
+from typing import Dict, Any
+
+
+class NDJSONServer:
+    """Simple NDJSON request/response server for ticker discovery and quotes."""
+
+    def __init__(self, quote_cache: Dict[str, Dict[str, Any]], snapshot_state: Dict[str, int],
+                 freshness_window_ms: int = 90_000, max_line_bytes: int = 65_536,
+                 idle_timeout_s: int = 60, req_timeout_s: int = 5):
+        self.quote_cache = quote_cache
+        self.snapshot_state = snapshot_state
+        self.freshness_window_ms = freshness_window_ms
+        self.max_line_bytes = max_line_bytes
+        self.idle_timeout_s = idle_timeout_s
+        self.req_timeout_s = req_timeout_s
+
+    # ------------------------------------------------------------------
+    # Networking helpers
+    # ------------------------------------------------------------------
+    async def start(self, host: str = "0.0.0.0", port: int = 12345):
+        """Start the TCP server and return the server instance."""
+        return await asyncio.start_server(self.handle_client, host, port)
+
+    async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """Handle a single client connection."""
+        try:
+            while True:
+                try:
+                    line = await asyncio.wait_for(reader.readline(), timeout=self.idle_timeout_s)
+                except asyncio.TimeoutError:
+                    break
+                except ValueError:
+                    # Raised if the incoming line exceeds the stream limit.
+                    await self.send_error(writer, None, "BAD_REQUEST", "Line too long")
+                    break
+                if not line:
+                    break
+                if len(line) > self.max_line_bytes:
+                    await self.send_error(writer, None, "BAD_REQUEST", "Line too long")
+                    continue
+                try:
+                    request = json.loads(line.decode("utf-8"))
+                except Exception:
+                    await self.send_error(writer, None, "BAD_REQUEST", "Malformed JSON")
+                    continue
+
+                req_id = request.get("id")
+                if request.get("v") != 1 or req_id is None or "type" not in request:
+                    await self.send_error(writer, req_id, "BAD_REQUEST", "Missing required fields")
+                    continue
+
+                req_type = request["type"]
+                start = time.time()
+                try:
+                    if req_type == "list_tickers":
+                        data = list(self.quote_cache.keys())
+                        response = {"v": 1, "id": req_id, "type": "response",
+                                    "op": "list_tickers", "data": data}
+                        await self.send(writer, response)
+                    elif req_type == "get_quote":
+                        ticker = request.get("ticker")
+                        if not ticker:
+                            await self.send_error(writer, req_id, "BAD_REQUEST", "Missing ticker")
+                            continue
+                        quote = self.quote_cache.get(ticker)
+                        if quote is None:
+                            await self.send_error(writer, req_id, "NOT_FOUND", f"Unknown ticker {ticker}")
+                            continue
+                        data = dict(quote)
+                        data["ticker"] = ticker
+                        now_ms = int(time.time() * 1000)
+                        data["stale"] = now_ms - quote.get("ts_epoch_ms", 0) > self.freshness_window_ms
+                        response = {"v": 1, "id": req_id, "type": "response",
+                                    "op": "get_quote", "data": data}
+                        await self.send(writer, response)
+                    elif req_type == "get_snapshot_epoch":
+                        data = {"epoch": self.snapshot_state.get("epoch", 0),
+                                "last_update_ms": self.snapshot_state.get("last_update_ms", 0)}
+                        response = {"v": 1, "id": req_id, "type": "response",
+                                    "op": "get_snapshot_epoch", "data": data}
+                        await self.send(writer, response)
+                    else:
+                        await self.send_error(writer, req_id, "BAD_REQUEST", "Unknown request type")
+                except Exception as exc:  # pragma: no cover - defensive
+                    await self.send_error(writer, req_id, "INTERNAL", str(exc))
+                finally:
+                    _ = int((time.time() - start) * 1000)  # latency placeholder
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    # ------------------------------------------------------------------
+    # Serialization helpers
+    # ------------------------------------------------------------------
+    async def send(self, writer: asyncio.StreamWriter, message: Dict[str, Any]):
+        writer.write(json.dumps(message, separators=(",", ":")).encode("utf-8") + b"\n")
+        await writer.drain()
+
+    async def send_error(self, writer: asyncio.StreamWriter, req_id: Any, code: str, message: str):
+        error_obj = {"v": 1, "id": req_id, "type": "error",
+                     "error": {"code": code, "message": message}}
+        await self.send(writer, error_obj)
+
+
+def _parse_listen(listen: str):
+    host, port_str = listen.split(":")
+    return host, int(port_str)
+
+
+def main():  # pragma: no cover - CLI helper
+    parser = argparse.ArgumentParser(description="NDJSON quote server")
+    parser.add_argument("--listen", default="0.0.0.0:12345")
+    parser.add_argument("--freshness-window-ms", type=int, default=90_000)
+    parser.add_argument("--max-line-bytes", type=int, default=65_536)
+    parser.add_argument("--idle-timeout-s", type=int, default=60)
+    parser.add_argument("--req-timeout-s", type=int, default=5)
+    args = parser.parse_args()
+
+    host, port = _parse_listen(args.listen)
+    quote_cache: Dict[str, Dict[str, Any]] = {}
+    snapshot_state = {"epoch": 0, "last_update_ms": 0}
+    server = NDJSONServer(quote_cache, snapshot_state,
+                          args.freshness_window_ms, args.max_line_bytes,
+                          args.idle_timeout_s, args.req_timeout_s)
+
+    loop = asyncio.get_event_loop()
+    srv = loop.run_until_complete(server.start(host, port))
+    try:
+        loop.run_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.close()
+        loop.run_until_complete(srv.wait_closed())
+        loop.close()
+
+
+if __name__ == "__main__":  # pragma: no cover - CLI entry point
+    main()
