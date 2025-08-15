@@ -51,3 +51,25 @@ the NDJSON quote server.  Every request must include the protocol version `v`,
 an `id` chosen by the client, and a `type` describing the operation.  Omitting
 any of these fields will result in a `BAD_REQUEST` error such as "Missing
 required fields".
+
+## Protocol and Logging Details
+
+The TCP service speaks [NDJSON](https://ndjson.org/): each line is a single
+JSON document encoded in UTF-8 and terminated by ``\n``.  The server rejects
+lines larger than ``max_line_bytes`` (default 64 KiB) or malformed JSON with a
+``BAD_REQUEST`` error.  Successful responses include ``type":"response`` and an
+``op`` matching the request, while errors return ``type":"error`` and an
+``error`` object containing a ``code`` and human readable ``message``.
+
+Error codes:
+
+- ``BAD_REQUEST`` – malformed JSON or missing required fields
+- ``NOT_FOUND`` – unknown ticker symbol
+- ``INTERNAL`` – unexpected server failure
+
+For deep debugging, the server logs every decoded request and sent response
+along with the client's socket address.  When an error occurs, the log entry
+also prints the offending request to simplify troubleshooting.
+
+The example client configures ``logging`` so that both outbound requests and
+incoming responses are written to stdout, mirroring what the server reports.

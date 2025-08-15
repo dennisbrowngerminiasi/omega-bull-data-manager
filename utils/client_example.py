@@ -1,16 +1,23 @@
 """Example client for NDJSON quote server.
 
 This script demonstrates how to interact with the NDJSON TCP quote
-server provided by the data manager.  It shows how to list available
-tickers and request a quote for a specific ticker.
+server provided by the data manager.  All outbound requests and inbound
+responses are logged so they can be cross referenced with the server
+logs for deep debugging.
 
-Each request must include:
-- ``v``: protocol version (1)
-- ``id``: client-supplied correlation identifier
-- ``type``: request operation such as ``list_tickers`` or ``get_quote``
+Each request must include three fields:
 
-Running this module as a script will print the list of tickers and the
-quote for the first ticker in the list.
+- ``v`` – protocol version (always ``1``)
+- ``id`` – client-supplied correlation identifier
+- ``type`` – operation such as ``list_tickers`` or ``get_quote``
+
+The server responds with ``type":"response`` and an ``op`` matching the
+request or ``type":"error`` with an ``error`` object containing
+``code`` and ``message``.  ``BAD_REQUEST`` is returned if any required
+field is missing.
+
+Running this module as a script will print the list of tickers, the
+current quote for the first ticker and the snapshot epoch metadata.
 """
 
 from __future__ import annotations
@@ -51,6 +58,12 @@ def get_quote(ticker: str) -> Dict[str, Any]:
     return resp.get("data", {})
 
 
+def get_snapshot_epoch() -> Dict[str, Any]:
+    req = {"v": 1, "id": str(uuid.uuid4()), "type": "get_snapshot_epoch"}
+    resp = _send(req)
+    return resp.get("data", {})
+
+
 if __name__ == "__main__":  # pragma: no cover - example usage
     logging.basicConfig(level=logging.INFO)
     tickers = list_tickers()
@@ -58,3 +71,5 @@ if __name__ == "__main__":  # pragma: no cover - example usage
     if tickers:
         quote = get_quote(tickers[0])
         print("Quote for", tickers[0], ":", quote)
+    snapshot = get_snapshot_epoch()
+    print("Snapshot state:", snapshot)
