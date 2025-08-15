@@ -1,6 +1,6 @@
 import asyncio
 import json
-from multiprocessing import Manager, Lock
+from threading import Lock
 from pathlib import Path
 import sys
 
@@ -69,8 +69,7 @@ async def send_request(port, obj):
 
 def test_server_endpoints():
     async def run_test():
-        mgr = Manager()
-        shared_dict = mgr.dict()
+        shared_dict = {}
         lock = Lock()
 
         fake_data = [
@@ -122,6 +121,5 @@ def test_server_endpoints():
 
         srv.close()
         await srv.wait_closed()
-        mgr.shutdown()
 
     asyncio.run(run_test())

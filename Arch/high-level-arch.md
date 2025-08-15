@@ -6,8 +6,8 @@ The data manager maintains per-ticker history in shared memory and a small
 in-memory quote cache for the latest point-in-time price.  A global snapshot
 state tracks the last update epoch and timestamp using a seqlock style scheme.
 
-The main entry point launches both the shared dictionary service and an
-NDJSON TCP server for discovery and point quotes:
+The main entry point launches an NDJSON TCP server for discovery and point
+quotes:
 
 - `list_tickers` — returns the set of tickers backed by shared memory
 - `get_quote` — retrieves the latest quote from the in-memory cache with stale
@@ -31,9 +31,8 @@ before consuming a snapshot, ensuring they never observe torn writes.
 2. The in-memory quote cache is refreshed with the most recent bar for each
    ticker.
 3. The snapshot state is updated with the current epoch and timestamp.
-4. `main.py` starts the NDJSON server alongside the shared dictionary
-   service, serving client requests using only the quote cache and snapshot
-   state for O(1) lookups.
+4. `main.py` starts the NDJSON server, serving client requests using only the
+   quote cache and snapshot state for O(1) lookups.
 
 This separation keeps historical data in shared memory while enabling fast,
 thread-safe quote retrieval over the network.
