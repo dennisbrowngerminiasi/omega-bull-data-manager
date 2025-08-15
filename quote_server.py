@@ -49,8 +49,20 @@ class NDJSONServer:
                     continue
 
                 req_id = request.get("id")
-                if request.get("v") != 1 or req_id is None or "type" not in request:
-                    await self.send_error(writer, req_id, "BAD_REQUEST", "Missing required fields")
+                missing = []
+                if request.get("v") != 1:
+                    missing.append("v")
+                if req_id is None:
+                    missing.append("id")
+                if "type" not in request:
+                    missing.append("type")
+                if missing:
+                    await self.send_error(
+                        writer,
+                        req_id,
+                        "BAD_REQUEST",
+                        "Missing required fields: " + ", ".join(missing),
+                    )
                     continue
 
                 req_type = request["type"]

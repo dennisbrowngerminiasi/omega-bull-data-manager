@@ -119,6 +119,13 @@ def test_server_endpoints():
         assert resp["type"] == "error"
         assert resp["error"]["code"] == "BAD_REQUEST"
 
+        # missing required fields
+        resp = await send_request(port, {"v": 1})
+        assert resp["type"] == "error"
+        assert resp["error"]["code"] == "BAD_REQUEST"
+        assert "id" in resp["error"]["message"]
+        assert "type" in resp["error"]["message"]
+
         srv.close()
         await srv.wait_closed()
 
