@@ -1,4 +1,4 @@
-from ib_insync import *
+from ib_insync import IB, Stock, util
 import pandas as pd
 
 

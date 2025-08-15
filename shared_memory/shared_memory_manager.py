@@ -1,5 +1,4 @@
 from pathlib import Path
-from stock.stock_data import StockData
 from stock.stock_data_interface import StockDataInterface
 
 
