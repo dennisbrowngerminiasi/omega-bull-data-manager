@@ -37,6 +37,13 @@ before consuming a snapshot, ensuring they never observe torn writes.
 This separation keeps historical data in shared memory while enabling fast,
 thread-safe quote retrieval over the network.
 
+## Lightweight Integration Mode
+
+For quick client development, the data manager exposes a hardcoded flag that
+skips the full data download and instead seeds the system with randomly
+generated quotes for a small subset of tickers.  This mode keeps the network
+interface identical while avoiding the cost of fetching real market data.
+
 ## Example Client
 
 See `utils/client_example.py` for a minimal example of how to interact with
