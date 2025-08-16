@@ -19,6 +19,8 @@ The script exercises the following operations:
 - `list_tickers`
 - `get_quote` (success and unknown ticker)
 - `get_snapshot_epoch`
+- Verifies that a baseline set of popular S&P 500 tickers (e.g. AAPL, MSFT,
+  AMZN) are present and retrievable
 - Requests with missing required fields (expecting `BAD_REQUEST`)
 
 Any assertion failures will raise an exception and halt the script.
