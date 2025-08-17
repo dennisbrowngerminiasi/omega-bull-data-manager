@@ -1,5 +1,6 @@
 from threading import Lock
 import json
+from datetime import datetime
 
 from multiprocessing import shared_memory
 
@@ -40,6 +41,25 @@ class FakeStockData:
         return self._data
 
 
+class FakeDateTimeStockData:
+    """Stock data returning datetime objects to verify JSON serialization."""
+
+    def __init__(self, ticker: str):
+        self.ticker = ticker
+        self.df = None
+        self._data = {
+            "ticker": ticker,
+            "start_date": datetime(2024, 1, 1),
+            "cur_date": datetime(2024, 1, 2),
+            "end_date": datetime(2024, 1, 2),
+            "period": "1 D",
+            "df": None,
+        }
+
+    def to_serializable_dict(self):
+        return self._data
+
+
 def test_write_data_populates_shared_memory_and_cache():
     shared_dict = {}
     lock = Lock()
@@ -68,6 +88,22 @@ def test_write_data_populates_shared_memory_and_cache():
 
     smm.write_data(data)
     assert smm.snapshot_state["epoch"] == first_epoch + 2
+
+    shm.close()
+    shm.unlink()
+
+
+def test_write_data_serializes_datetime_fields():
+    shared_dict = {}
+    lock = Lock()
+    shm = shared_memory.SharedMemory(create=True, size=10_000, name="test_shm_dt")
+    smm = SharedMemoryManager(shared_dict, lock, DummyDataManager(), shm)
+
+    smm.write_data([FakeDateTimeStockData("AAPL")])
+
+    raw = bytes(shm.buf).rstrip(b"\x00")
+    stored = json.loads(raw.decode("utf-8"))
+    assert stored["AAPL"]["data"]["start_date"] == "2024-01-01T00:00:00"
 
     shm.close()
     shm.unlink()

@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from typing import Optional
+from datetime import datetime
 
 from multiprocessing import shared_memory
 
@@ -150,7 +151,14 @@ class SharedMemoryManager(StockDataInterface):
     # ------------------------------------------------------------------
     def _persist_to_shared_memory(self) -> None:
         """Serialize ``shared_dict`` into ``self.shared_mem`` as JSON."""
-        payload = json.dumps(self.shared_dict, separators=(",", ":")).encode("utf-8")
+        def _json_default(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+        payload = json.dumps(
+            self.shared_dict, separators=(",", ":"), default=_json_default
+        ).encode("utf-8")
         if len(payload) > self.shared_mem.size:
             logging.warning(
                 "Shared memory segment %s too small (%d bytes) for payload (%d bytes)",
