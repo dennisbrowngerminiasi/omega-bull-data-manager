@@ -1,8 +1,21 @@
 import time
+import random
 from datetime import datetime, timedelta
-from ib_insync import IB
-from stock.stock_data import StockData
-from stock.etoro_tickers import EToroTickers
+
+# Hardcoded flag that allows developers to skip the expensive download path
+# and populate the system with random data instead.  This is useful when
+# testing the client integration without waiting for the full stock universe to
+# load.
+INTEGRATION_TEST_MODE = True
+
+if not INTEGRATION_TEST_MODE:  # pragma: no cover - optional dependency
+    from ib_insync import IB
+    from stock.stock_data import StockData
+    from stock.etoro_tickers import EToroTickers
+else:  # Fallback placeholders when running in integration-test mode
+    IB = None
+    StockData = None
+    EToroTickers = None
 
 cur_date = datetime.now()
 start_date = (cur_date - timedelta(days=365)).strftime("%Y-%m-%d")
@@ -15,16 +28,21 @@ class StockDataManager:
     def __init__(self):
         self.scanner_listeners = []
         self.stock_data_list = []
-        self.etoro_tickers_list = EToroTickers().list
         self.stop_event = False
-
-        self.ibkr_client = IB()
-        self.connect_to_ibkr_tws()
 
         self.sp500_tickers_list = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BRK.B", "NVDA", "UNH", "JNJ", "V",
             "XOM", "WMT", "JPM", "META", "PG", "MA", "CVX", "HD", "KO", "PEP",
         ]
+
+        if INTEGRATION_TEST_MODE:
+            # Use a small subset of tickers and avoid any external connections.
+            self.etoro_tickers_list = self.sp500_tickers_list[:5]
+            self.ibkr_client = None
+        else:  # pragma: no cover - requires external services
+            self.etoro_tickers_list = EToroTickers().list
+            self.ibkr_client = IB()
+            self.connect_to_ibkr_tws()
 
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
@@ -33,7 +51,12 @@ class StockDataManager:
 
     def start_downloader_agent(self):
         print("Start downloader agent")
-        self.downloader_agent(60*60)
+        if INTEGRATION_TEST_MODE:
+            self.notify_listeners_on_download_started()
+            self.stock_data_list = self._generate_random_data()
+            self.notify_listeners_on_download_finished()
+        else:
+            self.downloader_agent(60*60)
 
     def stop_downloader_agent(self):
         print("Stop downloader agent")
@@ -100,3 +123,44 @@ class StockDataManager:
     def get_all_stock_data(self):
         print("Getting all stock data")
         return self.stock_data_list
+
+    # ------------------------------------------------------------------
+    # Integration-test helpers
+    # ------------------------------------------------------------------
+    def _generate_random_data(self):
+        """Generate a small set of random stock data without external calls."""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        results = []
+        for ticker in self.etoro_tickers_list:
+            price = round(random.uniform(10, 500), 2)
+            volume = random.randint(1_000, 100_000)
+            results.append(_RandomStockData(ticker, price, volume, date_str))
+        return results
+
+
+class _RandomStockData:
+    """Lightweight stock data holder used in integration-test mode."""
+
+    def __init__(self, ticker: str, price: float, volume: int, date: str):
+        self.ticker = ticker
+        self.df = None
+        self._data = {
+            "ticker": ticker,
+            "start_date": date,
+            "cur_date": date,
+            "end_date": date,
+            "period": "1 D",
+            "df": [
+                {
+                    "Date": date,
+                    "Open": price,
+                    "High": price,
+                    "Low": price,
+                    "Close": price,
+                    "Volume": volume,
+                }
+            ],
+        }
+
+    def to_serializable_dict(self):
+        return self._data

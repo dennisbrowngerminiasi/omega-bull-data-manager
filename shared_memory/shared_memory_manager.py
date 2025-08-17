@@ -1,4 +1,13 @@
 from pathlib import Path
+import json
+import logging
+import os
+import time
+from typing import Optional
+from datetime import datetime
+
+from multiprocessing import shared_memory
+
 from stock.stock_data_interface import StockDataInterface
 
 
@@ -8,11 +17,39 @@ CSV_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 class SharedMemoryManager(StockDataInterface):
 
-    def __init__(self, shared_dict, lock, stock_data_manager):
+    def __init__(
+        self,
+        shared_dict,
+        lock,
+        stock_data_manager,
+        shm: Optional[shared_memory.SharedMemory] = None,
+    ):
         self.shared_dict = shared_dict
         self.lock = lock
         self.stock_data_manager = stock_data_manager
         self.stock_data_manager.register_listener(self)
+
+        # Optional real shared-memory segment backing historical data.  When
+        # provided, the manager serialises its shared_dict into this region so
+        # external clients can access the data directly.  In environments that
+        # do not supply a segment (e.g. unit tests without shared memory
+        # support), ``shm`` may be ``None`` and the NDJSON server will report
+        # that shared memory is unavailable.
+        self.shared_mem = shm
+        self.shm_name = shm.name if shm else None
+
+        # In-memory cache for the most recent quote of each ticker. The server
+        # reads from this structure to serve `get_quote` requests in O(1)
+        # without touching the historical data stored in the shared dictionary.
+        self.quote_cache = {}
+
+        # Global snapshot state used by the server to report the last update
+        # epoch and timestamp. The epoch follows a seqlock style scheme where
+        # odd numbers indicate that a write is in progress.
+        self.snapshot_state = {"epoch": 0, "last_update_ms": 0}
+
+        self.writer_pid = os.getpid()
+
         self.stock_data_manager.start_downloader_agent()
 
     def on_download_started(self):
@@ -23,29 +60,158 @@ class SharedMemoryManager(StockDataInterface):
         self.write_data(all_stock_data)
 
     def write_data(self, stock_data_list):
+        logging.info("Writing %d tickers to shared memory", len(stock_data_list))
         try:
-            print("Writing data to shared memory----------------------------------------------@@@@@@@")
-            self.lock.acquire()
+            with self.lock:
+                # Increment the global snapshot epoch to an odd number to signal
+                # that an update is in progress. Readers of the shared memory can
+                # detect this and retry until the epoch becomes even again.
+                self.snapshot_state["epoch"] += 1
+                logging.info(
+                    "Global epoch %d start", self.snapshot_state["epoch"]
+                )
 
-            # Use the actual ticker symbol as the key in shared memory so clients
-            # can access stock data by the expected ticker name instead of a
-            # generated index like "stock_0".  This ensures the shared memory
-            # keys accurately reflect the underlying data and matches the
-            # expectations of consumers of this module.
-            for stock_data in stock_data_list:
-                key = stock_data.ticker
-                self.shared_dict[key] = stock_data.to_serializable_dict()
+                # Use the actual ticker symbol as the key in shared memory so clients
+                # can access stock data by the expected ticker name instead of a
+                # generated index like "stock_0".  This ensures the shared memory
+                # keys accurately reflect the underlying data and matches the
+                # expectations of consumers of this module.
+                for stock_data in stock_data_list:
+                    key = stock_data.ticker
 
-                try:
-                    if stock_data.df is not None:
-                        csv_path = CSV_DATA_DIR / f"{stock_data.ticker}.csv"
-                        stock_data.df.to_csv(csv_path, index=False)
-                except Exception as csv_error:
-                    print(f"Error while saving CSV for {stock_data.ticker}: {csv_error}")
+                    # Retrieve existing entry or create a new one with a seqlock
+                    # style header.  The header fields allow readers to determine
+                    # whether they have observed a consistent snapshot.
+                    entry = self.shared_dict.get(
+                        key,
+                        {
+                            "header": {
+                                "version": 1,
+                                "epoch": 0,
+                                "last_update_ms": 0,
+                                "writer_pid": self.writer_pid,
+                            },
+                            "data": None,
+                        },
+                    )
 
-            self.lock.release()
-            print("finished writing data to shared memory")
+                    # Mark the entry as being written by incrementing the epoch to
+                    # an odd number before publishing any changes.
+                    entry["header"]["epoch"] += 1
+                    logging.debug(
+                        "Ticker %s epoch %d (writing)",
+                        key,
+                        entry["header"]["epoch"],
+                    )
+                    self.shared_dict[key] = entry
+
+                    data_dict = stock_data.to_serializable_dict()
+
+                    now_ms = int(time.time() * 1000)
+                    entry["data"] = data_dict
+                    entry["header"]["last_update_ms"] = now_ms
+                    entry["header"]["epoch"] += 1
+                    self.shared_dict[key] = entry
+                    logging.debug(
+                        "Ticker %s epoch %d (stable)",
+                        key,
+                        entry["header"]["epoch"],
+                    )
+
+                    # Update in-memory quote cache for fast `get_quote` lookups.
+                    try:
+                        if data_dict.get("df"):
+                            last = data_dict["df"][-1]
+                            ts_ms = int(
+                                time.mktime(time.strptime(last["Date"], "%Y-%m-%d"))
+                                * 1000
+                            )
+                            self.quote_cache[key] = {
+                                "price": last.get("Close"),
+                                "volume": last.get("Volume"),
+                                "currency": "USD",
+                                "ts_epoch_ms": ts_ms,
+                                "source": "shared_memory_manager",
+                            }
+                    except Exception as cache_error:
+                        logging.error("Error updating quote cache for %s: %s", key, cache_error)
+
+                    try:
+                        if stock_data.df is not None:
+                            csv_path = CSV_DATA_DIR / f"{stock_data.ticker}.csv"
+                            stock_data.df.to_csv(csv_path, index=False)
+                    except Exception as csv_error:
+                        logging.error(
+                            "Error while saving CSV for %s: %s",
+                            stock_data.ticker,
+                            csv_error,
+                        )
+
+                # Record the last update timestamp while the global epoch is
+                # still odd so readers know an update is in progress.  The
+                # epoch will be flipped to an even value only after the shared
+                # memory segment has been updated, preventing readers from
+                # observing a partially written payload.
+                self.snapshot_state["last_update_ms"] = int(time.time() * 1000)
+                if self.shared_mem is not None:
+                    self._persist_to_shared_memory()
+                # Finalize global snapshot epoch to an even value signalling a
+                # stable snapshot.
+                self.snapshot_state["epoch"] += 1
+                logging.info(
+                    "Global epoch %d commit", self.snapshot_state["epoch"]
+                )
         except Exception as e:
-            print(f"Error while writing data to shared memory: {e}")
-            self.lock.release()
+            logging.error("Error while writing data to shared memory: %s", e)
+            raise
+        logging.info("Finished writing data to shared memory")
+
+    # ------------------------------------------------------------------
+    def _persist_to_shared_memory(self) -> None:
+        """Serialize ``shared_dict`` into ``self.shared_mem`` as JSON."""
+        def _json_default(obj):
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+        payload = json.dumps(
+            self.shared_dict, separators=(",", ":"), default=_json_default
+        ).encode("utf-8")
+
+        if len(payload) > self.shared_mem.size:
+            new_size = 1
+            while new_size < len(payload):
+                new_size *= 2
+            name = self.shared_mem.name
+            logging.warning(
+                "Shared memory segment %s too small (%d bytes) for payload (%d bytes); reallocating to %d bytes",
+                name,
+                self.shared_mem.size,
+                len(payload),
+                new_size,
+            )
+            try:
+                self.shared_mem.close()
+                self.shared_mem.unlink()
+            except FileNotFoundError:
+                pass
+            self.shared_mem = shared_memory.SharedMemory(name=name, create=True, size=new_size)
+            self.shm_name = name
+
+        if len(payload) > self.shared_mem.size:
+            logging.error(
+                "Failed to resize shared memory segment %s to %d bytes", self.shared_mem.name, len(payload)
+            )
+            return
+
+        self.shared_mem.buf[: len(payload)] = payload
+        if len(payload) < self.shared_mem.size:
+            self.shared_mem.buf[len(payload) : self.shared_mem.size] = b"\x00" * (
+                self.shared_mem.size - len(payload)
+            )
+        logging.info(
+            "Persisted %d bytes to shared memory segment %s",
+            len(payload),
+            self.shared_mem.name,
+        )
 
