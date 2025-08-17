@@ -34,10 +34,6 @@ BASELINE_TICKERS: List[str] = [
     "UNH",
 ]
 
-# Hardcoded shared memory name used for smoke testing.  In a real deployment
-# the data manager would provide this out of band.
-SHM_NAME = "shm0"
-
 
 def _assert(condition: bool, message: str) -> None:
     """Raise an AssertionError with ``message`` if ``condition`` is False."""
@@ -97,13 +93,15 @@ def test_bad_request() -> None:
     print("missing required fields ->", err)
 
 
-def test_shared_memory_baseline() -> None:
+def test_shared_memory_baseline(shm_name: str) -> None:
     """Fetch quotes for a baseline set of tickers and verify SHM access.
 
-    The function first ensures that all baseline tickers are advertised by the
-    server.  It then retrieves a quote for each ticker and treats the collected
-    quotes as a stand-in for shared memory contents.  This mirrors how clients
-    would access historical data via the shared-memory reader.
+    ``shm_name`` is obtained from ``get_shm_name`` so the test exercises the
+    same discovery flow real clients follow.  The function first ensures that
+    all baseline tickers are advertised by the server.  It then retrieves a
+    quote for each ticker and treats the collected quotes as a stand-in for
+    shared memory contents.  This mirrors how clients would access historical
+    data via the shared-memory reader.
     """
 
     available = set(client.list_tickers())
@@ -117,7 +115,7 @@ def test_shared_memory_baseline() -> None:
     # dummy list.  This mirrors the configuration that would normally be
     # supplied by the data manager.
     layout = {t: [0] for t in available}
-    reader = StockDataReader(client.HOST, client.PORT, shm_name=SHM_NAME, layout=layout)
+    reader = StockDataReader(client.HOST, client.PORT, shm_name=shm_name, layout=layout)
 
     # Fetch and sanity check quotes and history for each baseline ticker.  The
     # history read ensures the shared-memory reader is properly configured.
@@ -137,7 +135,7 @@ def main() -> None:
     test_list_tickers()
     ticker = test_get_quote()
     test_get_snapshot_epoch()
-    test_shared_memory_baseline()
+    test_shared_memory_baseline(shm)
     test_not_found()
     test_bad_request()
     print("All smoke tests passed for ticker", ticker, "shm", shm)

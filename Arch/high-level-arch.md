@@ -144,6 +144,9 @@ as expected:
 - `get_quote` with an unknown ticker (expecting `NOT_FOUND`)
 - a request missing required fields (expecting `BAD_REQUEST`)
 
+The tests first call ``get_shm_name`` to discover the server-advertised segment
+and use that value when instantiating a ``StockDataReader`` for history reads.
+
 Run the tests with::
 
     python utils/smoke_tests/run_smoke_tests.py

@@ -47,8 +47,9 @@ When executed as a script this module will:
 3. Retrieve and print the latest quote for the first ticker.
 4. Show the snapshot epoch metadata.
 5. Attempt to read historical bars for the first ticker using
-   :class:`StockDataReader`.  If the shared memory configuration is not
-   supplied, a helpful error is logged explaining what is missing.
+   :class:`StockDataReader`.  The example uses the server-advertised
+   ``shm_name`` but omits the layout mapping, so a helpful error is logged
+   explaining what additional configuration is required.
 """
 
 from __future__ import annotations
@@ -133,8 +134,8 @@ if __name__ == "__main__":  # pragma: no cover - example usage
         print("Quote for", first, ":", quote)
 
         # Demonstrate shared-memory history access.  In a production setup
-        # ``shm_name`` and ``layout`` would be supplied by the data manager.
-        reader = StockDataReader(HOST, PORT, shm_name=None, layout=None)
+        # both ``shm_name`` and ``layout`` would be supplied by the data manager.
+        reader = StockDataReader(HOST, PORT, shm_name=shm, layout=None)
         history = get_history(reader, first)
         if history:
             print("First history point:", history[0])
