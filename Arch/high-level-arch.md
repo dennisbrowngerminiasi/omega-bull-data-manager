@@ -7,8 +7,9 @@ in-memory quote cache for the latest point-in-time price.  A global snapshot
 state tracks the last update epoch and timestamp using a seqlock style scheme.
 
 The main entry point launches an NDJSON TCP server for discovery and point
-quotes.  It seeds the shared-memory manager with the default segment name
-`"shm0"` so clients can attach to the historical data region via
+quotes.  To keep client integrations simple, it also creates a small operating
+system shared-memory segment named `"shm0"` and seeds the shared-memory manager
+with that name so clients can attach to the historical data region via
 `get_shm_name`:
 
 - `get_shm_name` — reveals the name of the shared-memory segment used for

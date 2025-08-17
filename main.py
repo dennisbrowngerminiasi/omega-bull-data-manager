@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from threading import Lock
+from multiprocessing import shared_memory
 
 from shared_memory.shared_memory_manager import SharedMemoryManager
 from stock.stock_data_manager import StockDataManager
@@ -14,15 +15,17 @@ def run():
     lock = Lock()
     shared_dict = {}
 
-    # The shared memory manager accepts an optional name for the historical
-    # data segment.  Advertise a default so clients can discover and attach to
-    # the region via ``get_shm_name``.
-    shm_name = "shm0"
+    # Create a tiny shared-memory segment so clients can attach for history
+    # reads.  The SharedMemoryManager only stores data in ``shared_dict`` today,
+    # but advertising a real segment prevents clients from failing with
+    # ``FileNotFoundError`` when attempting to open the region.
+    shm = shared_memory.SharedMemory(name="shm0", create=True, size=1_048_576)
+
     shared_memory_manager = SharedMemoryManager(
         shared_dict,
         lock,
         stock_data_manager,
-        shm_name=shm_name,
+        shm_name=shm.name,
     )
 
     loop = asyncio.new_event_loop()
@@ -41,6 +44,10 @@ def run():
         srv.close()
         loop.run_until_complete(srv.wait_closed())
         loop.close()
+        # Ensure the shared-memory segment is cleaned up when the server
+        # shuts down.
+        shm.close()
+        shm.unlink()
 
 
 if __name__ == "__main__":
