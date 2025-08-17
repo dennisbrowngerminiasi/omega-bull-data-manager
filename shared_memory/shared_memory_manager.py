@@ -179,16 +179,31 @@ class SharedMemoryManager(StockDataInterface):
         ).encode("utf-8")
 
         if len(payload) > self.shared_mem.size:
-            logging.error(
-                "Shared memory segment %s too small (%d bytes) for payload (%d bytes); "
-                "skipping write",
-                self.shared_mem.name,
+            new_size = 1
+            while new_size < len(payload):
+                new_size *= 2
+            name = self.shared_mem.name
+            logging.warning(
+                "Shared memory segment %s too small (%d bytes) for payload (%d bytes); reallocating to %d bytes",
+                name,
                 self.shared_mem.size,
                 len(payload),
+                new_size,
+            )
+            try:
+                self.shared_mem.close()
+                self.shared_mem.unlink()
+            except FileNotFoundError:
+                pass
+            self.shared_mem = shared_memory.SharedMemory(name=name, create=True, size=new_size)
+            self.shm_name = name
+
+        if len(payload) > self.shared_mem.size:
+            logging.error(
+                "Failed to resize shared memory segment %s to %d bytes", self.shared_mem.name, len(payload)
             )
             return
 
-        # Zero out the buffer then write the payload.
         self.shared_mem.buf[: len(payload)] = payload
         if len(payload) < self.shared_mem.size:
             self.shared_mem.buf[len(payload) : self.shared_mem.size] = b"\x00" * (

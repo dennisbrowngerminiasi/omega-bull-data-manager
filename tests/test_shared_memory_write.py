@@ -125,3 +125,23 @@ def test_epoch_logging(caplog):
 
     shm.close()
     shm.unlink()
+
+
+def test_write_data_resizes_shared_memory_when_needed():
+    shared_dict = {}
+    lock = Lock()
+    small_shm = shared_memory.SharedMemory(create=True, size=128, name="test_shm_small")
+    smm = SharedMemoryManager(shared_dict, lock, DummyDataManager(), small_shm)
+
+    big = FakeStockData("BIG", 1.0, 1)
+    big._data["df"][0]["Extra"] = "x" * 500
+
+    smm.write_data([big])
+
+    assert smm.shared_mem.size > 128
+    raw = bytes(smm.shared_mem.buf).rstrip(b"\x00")
+    stored = json.loads(raw.decode("utf-8"))
+    assert "BIG" in stored
+
+    smm.shared_mem.close()
+    smm.shared_mem.unlink()
