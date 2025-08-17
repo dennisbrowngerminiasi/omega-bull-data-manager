@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from threading import Lock
 from multiprocessing import shared_memory
 
@@ -19,14 +20,33 @@ def _ensure_shared_memory(name: str, size: int) -> shared_memory.SharedMemory:
     try:
         shm = shared_memory.SharedMemory(name=name, create=True, size=size)
         logging.info("Created shared memory segment %s (%d bytes)", name, size)
+        return shm
     except FileExistsError:  # pragma: no cover - requires prior crash
         logging.warning("Shared memory %s already exists; recreating", name)
-        existing = shared_memory.SharedMemory(name=name)
-        existing.close()
-        existing.unlink()
-        shm = shared_memory.SharedMemory(name=name, create=True, size=size)
-        logging.info("Re-created shared memory segment %s (%d bytes)", name, size)
-    return shm
+        try:
+            existing = shared_memory.SharedMemory(name=name)
+            existing.close()
+            existing.unlink()
+        except FileNotFoundError:
+            # Segment vanished between the create attempt and our cleanup.
+            pass
+        # The OS may take a moment to drop the segment after unlinking, so
+        # retry creation with a short backoff before giving up.
+        for attempt in range(5):
+            try:
+                shm = shared_memory.SharedMemory(name=name, create=True, size=size)
+                logging.info(
+                    "Re-created shared memory segment %s (%d bytes)", name, size
+                )
+                return shm
+            except FileExistsError:
+                logging.warning(
+                    "Shared memory %s still exists; retrying (%d/5)",
+                    name,
+                    attempt + 1,
+                )
+                time.sleep(0.1)
+        raise
 
 
 def run():
