@@ -115,9 +115,10 @@ def get_history(reader: StockDataReader, ticker: str) -> List[Any]:
     """
 
     try:
-        history = reader.get_stock(ticker)
-        logger.info("received %d history points", len(history))
-        return history
+        entry = reader.get_stock(ticker)
+        points = entry.get("df", []) if isinstance(entry, dict) else entry
+        logger.info("received %d history points", len(points))
+        return points
     except Exception as exc:  # broad to surface config issues to user
         logger.error("history read failed: %s", exc)
         return []
@@ -150,6 +151,7 @@ def read_history_with_epoch(shm_name: str, ticker: str, max_retries: int = 6) ->
                 continue
 
             payload = entry.get("data")
+            points = payload.get("df", []) if isinstance(payload, dict) else []
 
             raw2 = bytes(shm.buf).rstrip(b"\x00")
             data2 = json.loads(raw2.decode("utf-8"))
@@ -157,7 +159,7 @@ def read_history_with_epoch(shm_name: str, ticker: str, max_retries: int = 6) ->
 
             if e1 == e2 and e2 is not None and e2 % 2 == 0:
                 logger.info("stable epoch %s for %s", e2, ticker)
-                return payload
+                return points
 
             logger.debug("retry %d for %s: e1=%s e2=%s", attempt, ticker, e1, e2)
 
