@@ -1,14 +1,11 @@
 import asyncio
 import json
-import argparse
 import logging
 import time
 from typing import Dict, Any, Optional
 
 
 logger = logging.getLogger(__name__)
-
-
 class NDJSONServer:
     """Simple NDJSON request/response server for ticker discovery and quotes."""
 
@@ -166,51 +163,11 @@ class NDJSONServer:
         peer,
         request: Optional[Dict[str, Any]] = None,
     ):
-        error_obj = {"v": 1, "id": req_id, "type": "error",
-                     "error": {"code": code, "message": message}}
+        error_obj = {
+            "v": 1,
+            "id": req_id,
+            "type": "error",
+            "error": {"code": code, "message": message},
+        }
         logger.warning("error to %s: %s (request=%s)", peer, error_obj, request)
         await self.send(writer, error_obj, peer)
-
-
-def _parse_listen(listen: str):
-    host, port_str = listen.split(":")
-    return host, int(port_str)
-
-
-def main():  # pragma: no cover - CLI helper
-    logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(description="NDJSON quote server")
-    parser.add_argument("--listen", default="0.0.0.0:12345")
-    parser.add_argument("--freshness-window-ms", type=int, default=90_000)
-    parser.add_argument("--max-line-bytes", type=int, default=65_536)
-    parser.add_argument("--idle-timeout-s", type=int, default=60)
-    parser.add_argument("--req-timeout-s", type=int, default=5)
-    args = parser.parse_args()
-
-    host, port = _parse_listen(args.listen)
-    quote_cache: Dict[str, Dict[str, Any]] = {}
-    snapshot_state = {"epoch": 0, "last_update_ms": 0}
-    server = NDJSONServer(
-        quote_cache,
-        snapshot_state,
-        shm_name="shm0",
-        freshness_window_ms=args.freshness_window_ms,
-        max_line_bytes=args.max_line_bytes,
-        idle_timeout_s=args.idle_timeout_s,
-        req_timeout_s=args.req_timeout_s,
-    )
-
-    loop = asyncio.get_event_loop()
-    srv = loop.run_until_complete(server.start(host, port))
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        srv.close()
-        loop.run_until_complete(srv.wait_closed())
-        loop.close()
-
-
-if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    main()
