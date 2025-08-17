@@ -1,23 +1,48 @@
-"""Example client for NDJSON quote server.
+"""Reference client for the NDJSON quote server.
 
-This script demonstrates how to interact with the NDJSON TCP quote
-server provided by the data manager.  All outbound requests and inbound
-responses are logged so they can be cross referenced with the server
-logs for deep debugging.
+This module demonstrates the full set of request/response operations
+supported by the NDJSON TCP service:
 
-Each request must include three fields:
+``list_tickers``
+    Discover the tickers currently backed by shared memory.
 
-- ``v`` – protocol version (always ``1``)
-- ``id`` – client-supplied correlation identifier
-- ``type`` – operation such as ``list_tickers`` or ``get_quote``
+``get_quote``
+    Fetch a point-in-time quote from the in-memory cache.  The server
+    replies with pricing fields such as ``price`` and ``volume`` along
+    with metadata like ``currency`` and ``stale``.
 
-The server responds with ``type":"response`` and an ``op`` matching the
-request or ``type":"error`` with an ``error`` object containing
-``code`` and ``message``.  ``BAD_REQUEST`` is returned if any required
-field is missing.
+``get_snapshot_epoch``
+    Inspect the global snapshot seqlock state to understand when the
+    shared memory was last updated.
 
-Running this module as a script will print the list of tickers, the
-current quote for the first ticker and the snapshot epoch metadata.
+``StockDataReader.get_stock``
+    (client side) Read historical bars directly from the shared memory
+    region.  This requires the shared memory name and layout mapping used
+    by the data manager.  The example below shows how a client would
+    instantiate the reader once this information is obtained out of band.
+
+Every request sent to the server **must** include three fields:
+
+``v``
+    Protocol version (always ``1``).
+
+``id``
+    Client supplied correlation identifier used to match requests with
+    responses.
+
+``type``
+    Operation such as ``list_tickers`` or ``get_quote``.  Missing any of
+    the above fields will yield a ``BAD_REQUEST`` error with the list of
+    missing names.
+
+When executed as a script this module will:
+
+1. Print the list of available tickers.
+2. Retrieve and print the latest quote for the first ticker.
+3. Show the snapshot epoch metadata.
+4. Attempt to read historical bars for the first ticker using
+   :class:`StockDataReader`.  If the shared memory configuration is not
+   supplied, a helpful error is logged explaining what is missing.
 """
 
 from __future__ import annotations
@@ -27,6 +52,8 @@ import logging
 import socket
 import uuid
 from typing import Any, Dict, List
+
+from shared_memory.shared_memory_reader import StockDataReader
 
 HOST = "127.0.0.1"
 PORT = 12345
@@ -64,12 +91,38 @@ def get_snapshot_epoch() -> Dict[str, Any]:
     return resp.get("data", {})
 
 
+def get_history(reader: StockDataReader, ticker: str) -> List[Any]:
+    """Return historical bars for ``ticker`` using ``reader``.
+
+    If the reader was not configured with ``shm_name`` and ``layout`` a
+    ``ValueError`` will be raised and logged.
+    """
+
+    try:
+        history = reader.get_stock(ticker)
+        logger.info("received %d history points", len(history))
+        return history
+    except Exception as exc:  # broad to surface config issues to user
+        logger.error("history read failed: %s", exc)
+        return []
+
+
 if __name__ == "__main__":  # pragma: no cover - example usage
     logging.basicConfig(level=logging.INFO)
     tickers = list_tickers()
     print("Tickers:", tickers)
+
     if tickers:
-        quote = get_quote(tickers[0])
-        print("Quote for", tickers[0], ":", quote)
+        first = tickers[0]
+        quote = get_quote(first)
+        print("Quote for", first, ":", quote)
+
+        # Demonstrate shared-memory history access.  In a production setup
+        # ``shm_name`` and ``layout`` would be supplied by the data manager.
+        reader = StockDataReader(HOST, PORT, shm_name=None, layout=None)
+        history = get_history(reader, first)
+        if history:
+            print("First history point:", history[0])
+
     snapshot = get_snapshot_epoch()
     print("Snapshot state:", snapshot)

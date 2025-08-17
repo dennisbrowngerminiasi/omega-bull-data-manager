@@ -104,11 +104,18 @@ interface identical while avoiding the cost of fetching real market data.
 
 ## Example Client
 
-See `utils/client_example.py` for a minimal example of how to interact with
-the NDJSON quote server.  Every request must include the protocol version `v`,
-an `id` chosen by the client, and a `type` describing the operation.  Omitting
-any of these fields will result in a `BAD_REQUEST` error such as "Missing
-required fields".
+See `utils/client_example.py` and the accompanying `utils/README.md` for a
+reference implementation of all client operations.  The examples show how to:
+
+- enumerate tickers with ``list_tickers``
+- fetch point quotes via ``get_quote``
+- inspect the snapshot state using ``get_snapshot_epoch``
+- read historical bars from shared memory with ``StockDataReader``
+
+Every request sent to the TCP service must include the protocol version
+`v`, an `id` chosen by the client, and a `type` describing the operation.
+Omitting any of these fields yields a `BAD_REQUEST` error naming the missing
+fields.
 
 ## Client-Side Smoke Tests
 
