@@ -13,7 +13,17 @@ def run():
     stock_data_manager = StockDataManager()
     lock = Lock()
     shared_dict = {}
-    shared_memory_manager = SharedMemoryManager(shared_dict, lock, stock_data_manager)
+
+    # The shared memory manager accepts an optional name for the historical
+    # data segment.  Advertise a default so clients can discover and attach to
+    # the region via ``get_shm_name``.
+    shm_name = "shm0"
+    shared_memory_manager = SharedMemoryManager(
+        shared_dict,
+        lock,
+        stock_data_manager,
+        shm_name=shm_name,
+    )
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
