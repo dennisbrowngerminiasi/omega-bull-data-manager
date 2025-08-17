@@ -8,6 +8,27 @@ from stock.stock_data_manager import StockDataManager
 from quote_server import NDJSONServer
 
 
+def _ensure_shared_memory(name: str, size: int) -> shared_memory.SharedMemory:
+    """Create or replace a named shared-memory segment.
+
+    If a segment with *name* already exists (e.g. leftover from a previous
+    crash), it is unlinked before a fresh segment is created.  This mirrors the
+    behaviour expected by the client which always connects to a clean region.
+    """
+
+    try:
+        shm = shared_memory.SharedMemory(name=name, create=True, size=size)
+        logging.info("Created shared memory segment %s (%d bytes)", name, size)
+    except FileExistsError:  # pragma: no cover - requires prior crash
+        logging.warning("Shared memory %s already exists; recreating", name)
+        existing = shared_memory.SharedMemory(name=name)
+        existing.close()
+        existing.unlink()
+        shm = shared_memory.SharedMemory(name=name, create=True, size=size)
+        logging.info("Re-created shared memory segment %s (%d bytes)", name, size)
+    return shm
+
+
 def run():
     """Initialize shared memory and launch the NDJSON quote server."""
     logging.basicConfig(level=logging.INFO)
@@ -21,8 +42,7 @@ def run():
     # this limit the manager logs an error and skips the write rather than
     # truncating the payload.
     SHM_SIZE = 64 * 1024 * 1024  # 64 MiB
-    shm = shared_memory.SharedMemory(name="shm0", create=True, size=SHM_SIZE)
-    logging.info("Created shared memory segment %s (%d bytes)", shm.name, shm.size)
+    shm = _ensure_shared_memory("shm0", SHM_SIZE)
 
     shared_memory_manager = SharedMemoryManager(
         shared_dict,
