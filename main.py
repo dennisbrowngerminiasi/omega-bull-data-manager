@@ -17,36 +17,32 @@ def _ensure_shared_memory(name: str, size: int) -> shared_memory.SharedMemory:
     behaviour expected by the client which always connects to a clean region.
     """
 
-    try:
-        shm = shared_memory.SharedMemory(name=name, create=True, size=size)
-        logging.info("Created shared memory segment %s (%d bytes)", name, size)
-        return shm
-    except FileExistsError:  # pragma: no cover - requires prior crash
-        logging.warning("Shared memory %s already exists; recreating", name)
+    for attempt in range(5):
         try:
-            existing = shared_memory.SharedMemory(name=name)
-            existing.close()
-            existing.unlink()
-        except FileNotFoundError:
-            # Segment vanished between the create attempt and our cleanup.
-            pass
-        # The OS may take a moment to drop the segment after unlinking, so
-        # retry creation with a short backoff before giving up.
-        for attempt in range(5):
+            shm = shared_memory.SharedMemory(name=name, create=True, size=size)
+            logging.info("Created shared memory segment %s (%d bytes)", name, size)
+            return shm
+        except FileExistsError:  # pragma: no cover - requires prior crash
+            logging.warning(
+                "Shared memory %s already exists; unlinking and retrying (%d/5)",
+                name,
+                attempt + 1,
+            )
             try:
-                shm = shared_memory.SharedMemory(name=name, create=True, size=size)
-                logging.info(
-                    "Re-created shared memory segment %s (%d bytes)", name, size
-                )
-                return shm
-            except FileExistsError:
-                logging.warning(
-                    "Shared memory %s still exists; retrying (%d/5)",
-                    name,
-                    attempt + 1,
-                )
-                time.sleep(0.1)
-        raise
+                existing = shared_memory.SharedMemory(name=name)
+                existing.unlink()
+                existing.close()
+            except FileNotFoundError:
+                # Segment vanished between the create attempt and our cleanup.
+                pass
+            time.sleep(0.1)
+
+    # If creation still fails after retries, fall back to reusing the
+    # existing segment so the server can continue operating.
+    logging.error(
+        "Falling back to existing shared memory segment %s after retries", name
+    )
+    return shared_memory.SharedMemory(name=name)
 
 
 def run():
