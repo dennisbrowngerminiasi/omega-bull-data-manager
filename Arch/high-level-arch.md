@@ -21,8 +21,11 @@ with that name so clients can attach to the historical data region via
 - `get_snapshot_epoch` — reports the current snapshot epoch and last update
   timestamp for observability
 
-Clients interact with the server instead of reading the shared memory directly
-for point quotes, avoiding race conditions and heavy parsing.
+Because clients must discover the shared-memory region dynamically,
+`get_shm_name` is a first-class endpoint in this architecture rather than a
+legacy helper; any compliant server should implement it whenever shared memory
+is available. Clients interact with the server instead of reading the shared
+memory directly for point quotes, avoiding race conditions and heavy parsing.
 
 ## Shared Memory Seqlock
 
