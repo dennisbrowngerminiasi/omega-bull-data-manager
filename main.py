@@ -15,11 +15,13 @@ def run():
     lock = Lock()
     shared_dict = {}
 
-    # Create a tiny shared-memory segment so clients can attach for history
-    # reads.  The SharedMemoryManager only stores data in ``shared_dict`` today,
-    # but advertising a real segment prevents clients from failing with
-    # ``FileNotFoundError`` when attempting to open the region.
-    shm = shared_memory.SharedMemory(name="shm0", create=True, size=1_048_576)
+    # Create a shared-memory segment so clients can attach for history reads.
+    # The default size (64 MiB) accommodates a reasonably large dataset while
+    # still fitting comfortably on modern systems.  If the dataset grows beyond
+    # this limit the manager logs an error and skips the write rather than
+    # truncating the payload.
+    SHM_SIZE = 64 * 1024 * 1024  # 64 MiB
+    shm = shared_memory.SharedMemory(name="shm0", create=True, size=SHM_SIZE)
     logging.info("Created shared memory segment %s (%d bytes)", shm.name, shm.size)
 
     shared_memory_manager = SharedMemoryManager(

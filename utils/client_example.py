@@ -108,8 +108,9 @@ def get_shm_name() -> str:
 def get_history(reader: StockDataReader, ticker: str) -> List[Any]:
     """Return historical bars for ``ticker`` using ``reader``.
 
-    If the reader was not configured with ``shm_name`` and ``layout`` a
-    ``ValueError`` will be raised and logged.
+    The reader must be configured with a valid shared-memory segment name.
+    Any configuration problems are logged so callers can diagnose issues
+    such as the segment being too small or absent.
     """
 
     try:
@@ -133,9 +134,10 @@ if __name__ == "__main__":  # pragma: no cover - example usage
         quote = get_quote(first)
         print("Quote for", first, ":", quote)
 
-        # Demonstrate shared-memory history access.  In a production setup
-        # both ``shm_name`` and ``layout`` would be supplied by the data manager.
-        reader = StockDataReader(HOST, PORT, shm_name=shm, layout=None)
+        # Demonstrate shared-memory history access.  In a production setup the
+        # data manager advertises the ``shm_name`` which is passed to
+        # ``StockDataReader``.
+        reader = StockDataReader(HOST, PORT, shm_name=shm)
         history = get_history(reader, first)
         if history:
             print("First history point:", history[0])

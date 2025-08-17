@@ -45,25 +45,20 @@ The script will:
 
 ### Shared Memory Configuration
 
-Reading history requires two pieces of information obtained from the data
-manager. Servers running without a shared-memory region will return an error
-to `get_shm_name` and history reads should be skipped:
+Reading history requires the name of the shared-memory segment obtained from
+the data manager. Servers running without a shared-memory region will return a
+`NOT_FOUND` error to `get_shm_name` and history reads should be skipped.
 
-- **`shm_name`** – name of the shared-memory segment containing historical
-  data.
-- **`layout`** – mapping of ticker symbols to their offset/size information
-  inside the segment.
-
-Pass these values to `StockDataReader`:
+Pass the advertised segment name to `StockDataReader`:
 
 ```python
 from shared_memory.shared_memory_reader import StockDataReader
 
-reader = StockDataReader(host, port, shm_name="stocks", layout=ticker_layout)
+reader = StockDataReader(host, port, shm_name="stocks")
 rows = reader.get_stock("AAPL")
-print("first close", rows[0]["Close"])
+print("first close", rows["df"][0]["Close"])
 ```
 
-The example ships with a minimal reader that mirrors the error a client would
-receive if the shared-memory configuration is not supplied. Replace it with a
-real implementation when integrating with the production data manager.
+The example reader in this repository opens the shared-memory segment directly
+and retries if it encounters an inconsistent seqlock epoch, logging detailed
+information about each attempt.

@@ -134,15 +134,17 @@ class SharedMemoryManager(StockDataInterface):
                             csv_error,
                         )
 
-                # Finalize global snapshot epoch to an even value and record the
-                # last update timestamp.
+                # Record the last update timestamp while the global epoch is
+                # still odd so readers know an update is in progress.  The
+                # epoch will be flipped to an even value only after the shared
+                # memory segment has been updated, preventing readers from
+                # observing a partially written payload.
                 self.snapshot_state["last_update_ms"] = int(time.time() * 1000)
-                self.snapshot_state["epoch"] += 1
-                # Persist the entire shared dictionary into the shared-memory
-                # segment so external clients can consume it.  The payload is
-                # stored as JSON for simplicity.
                 if self.shared_mem is not None:
                     self._persist_to_shared_memory()
+                # Finalize global snapshot epoch to an even value signalling a
+                # stable snapshot.
+                self.snapshot_state["epoch"] += 1
         except Exception as e:
             logging.error("Error while writing data to shared memory: %s", e)
             raise
@@ -159,14 +161,17 @@ class SharedMemoryManager(StockDataInterface):
         payload = json.dumps(
             self.shared_dict, separators=(",", ":"), default=_json_default
         ).encode("utf-8")
+
         if len(payload) > self.shared_mem.size:
-            logging.warning(
-                "Shared memory segment %s too small (%d bytes) for payload (%d bytes)",
+            logging.error(
+                "Shared memory segment %s too small (%d bytes) for payload (%d bytes); "
+                "skipping write",
                 self.shared_mem.name,
                 self.shared_mem.size,
                 len(payload),
             )
-            payload = payload[: self.shared_mem.size]
+            return
+
         # Zero out the buffer then write the payload.
         self.shared_mem.buf[: len(payload)] = payload
         if len(payload) < self.shared_mem.size:
