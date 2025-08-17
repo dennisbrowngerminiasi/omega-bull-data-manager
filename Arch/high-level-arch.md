@@ -10,7 +10,8 @@ The main entry point launches an NDJSON TCP server for discovery and point
 quotes:
 
 - `get_shm_name` — reveals the name of the shared-memory segment used for
-  historical bars
+  historical bars. If shared memory is not configured, the server responds with
+  a `NOT_FOUND` error.
 - `list_tickers` — returns the set of tickers backed by shared memory
 - `get_quote` — retrieves the latest quote from the in-memory cache with stale
   detection against the configured freshness window
@@ -127,7 +128,7 @@ For validating a deployment, a set of client-side smoke tests lives in
 paths against a running server to ensure the full request/response cycle works
 as expected:
 
-- `get_shm_name`
+- `get_shm_name` (expect `NOT_FOUND` if shared memory is disabled)
 - `list_tickers`
 - `get_quote`
 - `get_snapshot_epoch`

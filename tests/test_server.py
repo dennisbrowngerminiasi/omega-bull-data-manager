@@ -77,7 +77,7 @@ def test_server_endpoints():
             FakeStockData("MSFT", 200.0, 20),
         ]
         fdm = FakeDataManager(fake_data)
-        smm = SharedMemoryManager(shared_dict, lock, fdm)
+        smm = SharedMemoryManager(shared_dict, lock, fdm, shm_name="shm0")
 
         server = NDJSONServer(smm.quote_cache, smm.snapshot_state, smm.shm_name)
         srv = await server.start("127.0.0.1", 0)
@@ -129,6 +129,28 @@ def test_server_endpoints():
         assert resp["error"]["code"] == "BAD_REQUEST"
         assert "id" in resp["error"]["message"]
         assert "type" in resp["error"]["message"]
+
+        srv.close()
+        await srv.wait_closed()
+
+    asyncio.run(run_test())
+
+
+def test_get_shm_name_unconfigured():
+    async def run_test():
+        shared_dict = {}
+        lock = Lock()
+        fake_data = [FakeStockData("AAPL", 100.0, 10)]
+        fdm = FakeDataManager(fake_data)
+        smm = SharedMemoryManager(shared_dict, lock, fdm, shm_name=None)
+
+        server = NDJSONServer(smm.quote_cache, smm.snapshot_state, None)
+        srv = await server.start("127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+
+        resp = await send_request(port, {"v": 1, "id": "shm", "type": "get_shm_name"})
+        assert resp["type"] == "error"
+        assert resp["error"]["code"] == "NOT_FOUND"
 
         srv.close()
         await srv.wait_closed()

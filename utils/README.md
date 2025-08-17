@@ -9,7 +9,8 @@ server and the shared-memory history.
 supported operations:
 
 1. **`get_shm_name`** – discover the shared-memory segment name used for
-   historical data.
+   historical data. If the server is not configured with a shared-memory
+   region, this request returns an error.
 2. **`list_tickers`** – enumerate the tickers backed by shared memory.
 3. **`get_quote`** – obtain the most recent price, volume, and metadata for a
    ticker.
@@ -45,7 +46,8 @@ The script will:
 ### Shared Memory Configuration
 
 Reading history requires two pieces of information obtained from the data
-manager:
+manager. Servers running without a shared-memory region will return an error
+to `get_shm_name` and history reads should be skipped:
 
 - **`shm_name`** – name of the shared-memory segment containing historical
   data.

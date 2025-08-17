@@ -17,7 +17,8 @@ supported by the NDJSON TCP service:
 
 ``get_shm_name``
     Discover the name of the shared-memory segment used for historical
-    bars.  Clients need this value to attach directly for history reads.
+    bars.  Clients need this value to attach directly for history reads.  The
+    server responds with an error if no shared-memory region is configured.
 
 ``StockDataReader.get_stock``
     (client side) Read historical bars directly from the shared memory

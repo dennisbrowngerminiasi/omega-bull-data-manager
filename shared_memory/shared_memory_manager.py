@@ -10,14 +10,16 @@ CSV_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 class SharedMemoryManager(StockDataInterface):
 
-    def __init__(self, shared_dict, lock, stock_data_manager, shm_name: str = "shm0"):
+    def __init__(self, shared_dict, lock, stock_data_manager, shm_name: str | None = None):
         self.shared_dict = shared_dict
         self.lock = lock
         self.stock_data_manager = stock_data_manager
         self.stock_data_manager.register_listener(self)
 
-        # Name of the shared-memory segment backing historical data.  Clients
-        # can discover this via the NDJSON server's ``get_shm_name`` endpoint.
+        # Optional name of a real shared-memory segment backing historical data.
+        # In environments that don't expose such a segment (e.g. tests or the
+        # lightweight integration mode), ``shm_name`` may be ``None`` and the
+        # NDJSON server will report that shared memory is unavailable.
         self.shm_name = shm_name
 
         # In-memory cache for the most recent quote of each ticker. The server

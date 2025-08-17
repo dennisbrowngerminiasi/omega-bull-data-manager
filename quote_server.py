@@ -12,10 +12,16 @@ logger = logging.getLogger(__name__)
 class NDJSONServer:
     """Simple NDJSON request/response server for ticker discovery and quotes."""
 
-    def __init__(self, quote_cache: Dict[str, Dict[str, Any]], snapshot_state: Dict[str, int],
-                 shm_name: str,
-                 freshness_window_ms: int = 90_000, max_line_bytes: int = 65_536,
-                 idle_timeout_s: int = 60, req_timeout_s: int = 5):
+    def __init__(
+        self,
+        quote_cache: Dict[str, Dict[str, Any]],
+        snapshot_state: Dict[str, int],
+        shm_name: str | None,
+        freshness_window_ms: int = 90_000,
+        max_line_bytes: int = 65_536,
+        idle_timeout_s: int = 60,
+        req_timeout_s: int = 5,
+    ):
         self.quote_cache = quote_cache
         self.snapshot_state = snapshot_state
         self.shm_name = shm_name
@@ -112,10 +118,25 @@ class NDJSONServer:
                                     "op": "get_snapshot_epoch", "data": data}
                         await self.send(writer, response, peer)
                     elif req_type == "get_shm_name":
-                        data = {"shm_name": self.shm_name}
-                        response = {"v": 1, "id": req_id, "type": "response",
-                                    "op": "get_shm_name", "data": data}
-                        await self.send(writer, response, peer)
+                        if self.shm_name is None:
+                            await self.send_error(
+                                writer,
+                                req_id,
+                                "NOT_FOUND",
+                                "Shared memory not configured",
+                                peer,
+                                request,
+                            )
+                        else:
+                            data = {"shm_name": self.shm_name}
+                            response = {
+                                "v": 1,
+                                "id": req_id,
+                                "type": "response",
+                                "op": "get_shm_name",
+                                "data": data,
+                            }
+                            await self.send(writer, response, peer)
                     else:
                         await self.send_error(writer, req_id, "BAD_REQUEST", "Unknown request type", peer, request)
                 except Exception as exc:  # pragma: no cover - defensive
