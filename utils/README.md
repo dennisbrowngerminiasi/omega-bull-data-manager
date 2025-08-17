@@ -17,7 +17,11 @@ supported operations:
 4. **`get_snapshot_epoch`** – inspect the global seqlock state to detect when
    data was last written.
 5. **`StockDataReader.get_stock`** – read historical bars directly from shared
-   memory.
+   memory using a seqlock check that verifies the per‑ticker epoch before
+   returning a snapshot.
+6. **`read_history_with_epoch`** – a lower-level helper that reimplements the
+   seqlock algorithm for educational purposes so developers can see the epoch
+   dance in full.
 
 Every request sent to the server must include the fields `v`, `id`, and `type`.
 Requests missing any of these fields will be rejected with a `BAD_REQUEST`
@@ -39,9 +43,10 @@ The script will:
 - Print the available tickers.
 - Display the latest quote for the first ticker.
 - Show the snapshot epoch metadata.
-- Attempt to read history for the first ticker using
-  `StockDataReader`. If the shared memory configuration is absent it logs a
-  clear error explaining which values are required.
+- Attempt to read history for the first ticker using both `StockDataReader`
+  and `read_history_with_epoch` to show the underlying epoch validation. If
+  the shared memory configuration is absent a clear error is logged
+  explaining which values are required.
 
 ### Shared Memory Configuration
 

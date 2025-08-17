@@ -22,9 +22,10 @@ supported by the NDJSON TCP service:
 
 ``StockDataReader.get_stock``
     (client side) Read historical bars directly from the shared memory
-    region.  This requires the shared memory name and layout mapping used
-    by the data manager.  The example below shows how a client would
-    instantiate the reader once this information is obtained out of band.
+    region using a seqlock style loop that verifies the per‑ticker epoch
+    before and after loading the JSON payload.  The example below shows
+    how a client would instantiate the reader once the shared-memory name
+    is discovered.
 
 Every request sent to the server **must** include three fields:
 
@@ -47,9 +48,8 @@ When executed as a script this module will:
 3. Retrieve and print the latest quote for the first ticker.
 4. Show the snapshot epoch metadata.
 5. Attempt to read historical bars for the first ticker using
-   :class:`StockDataReader`.  The example uses the server-advertised
-   ``shm_name`` but omits the layout mapping, so a helpful error is logged
-   explaining what additional configuration is required.
+   :class:`StockDataReader` and a lower-level helper that explicitly
+   demonstrates the seqlock epoch dance.
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ import logging
 import socket
 import uuid
 from typing import Any, Dict, List
+from multiprocessing import shared_memory
 
 from shared_memory.shared_memory_reader import StockDataReader
 
@@ -122,6 +123,49 @@ def get_history(reader: StockDataReader, ticker: str) -> List[Any]:
         return []
 
 
+def read_history_with_epoch(shm_name: str, ticker: str, max_retries: int = 6) -> List[Any]:
+    """Manually read ``ticker`` using the seqlock protocol.
+
+    This function demonstrates the low-level algorithm that
+    :class:`StockDataReader` uses: the epoch is captured before and after
+    reading the JSON payload to ensure the writer was not in the middle of
+    an update.  The function retries a few times if the epoch is odd or
+    changes between reads.
+    """
+
+    shm = shared_memory.SharedMemory(name=shm_name)
+    try:
+        for attempt in range(max_retries):
+            raw = bytes(shm.buf).rstrip(b"\x00")
+            if not raw:
+                return []
+            data = json.loads(raw.decode("utf-8"))
+            entry = data.get(ticker)
+            if entry is None:
+                raise KeyError(ticker)
+
+            e1 = entry.get("header", {}).get("epoch")
+            if e1 is None or e1 % 2:
+                logger.debug("writer in progress e1=%s attempt=%d", e1, attempt)
+                continue
+
+            payload = entry.get("data")
+
+            raw2 = bytes(shm.buf).rstrip(b"\x00")
+            data2 = json.loads(raw2.decode("utf-8"))
+            e2 = data2.get(ticker, {}).get("header", {}).get("epoch")
+
+            if e1 == e2 and e2 is not None and e2 % 2 == 0:
+                logger.info("stable epoch %s for %s", e2, ticker)
+                return payload
+
+            logger.debug("retry %d for %s: e1=%s e2=%s", attempt, ticker, e1, e2)
+
+        raise RuntimeError("Could not obtain a stable snapshot after retries")
+    finally:
+        shm.close()
+
+
 if __name__ == "__main__":  # pragma: no cover - example usage
     logging.basicConfig(level=logging.INFO)
     shm = get_shm_name()
@@ -140,7 +184,15 @@ if __name__ == "__main__":  # pragma: no cover - example usage
         reader = StockDataReader(HOST, PORT, shm_name=shm)
         history = get_history(reader, first)
         if history:
-            print("First history point:", history[0])
+            print("First history point via reader:", history[0])
+
+        # Also show the explicit seqlock algorithm for educational purposes.
+        try:
+            manual = read_history_with_epoch(shm, first)
+            if manual:
+                print("First history point via seqlock:", manual[0])
+        except Exception as exc:
+            logger.error("manual seqlock read failed: %s", exc)
 
     snapshot = get_snapshot_epoch()
     print("Snapshot state:", snapshot)
