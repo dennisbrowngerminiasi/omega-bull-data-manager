@@ -2,7 +2,10 @@
 
 This directory contains a small battery of client-side smoke tests for the
 NDJSON quote server.  They verify that all public endpoints respond correctly
-and that common error paths return the expected codes.
+and that common error paths return the expected codes.  The tests also
+instantiate a `StockDataReader` with a hardcoded shared-memory name and a
+synthetic layout derived from the server's advertised tickers so that the
+shared-memory access path is exercised end to end.
 
 ## Usage
 

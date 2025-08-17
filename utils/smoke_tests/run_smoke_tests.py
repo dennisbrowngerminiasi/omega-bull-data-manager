@@ -16,6 +16,7 @@ import uuid
 from typing import Any, Dict, List
 
 from utils import client_example as client
+from shared_memory.shared_memory_reader import StockDataReader
 
 # Baseline S&P 500 tickers used to validate shared-memory reads.  These are
 # widely-traded symbols that should be present in any reasonably complete
@@ -32,6 +33,10 @@ BASELINE_TICKERS: List[str] = [
     "V",
     "UNH",
 ]
+
+# Hardcoded shared memory name used for smoke testing.  In a real deployment
+# the data manager would provide this out of band.
+SHM_NAME = "shm0"
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -101,14 +106,20 @@ def test_shared_memory_baseline() -> None:
         f"baseline tickers missing from shared memory: {missing}",
     )
 
-    # Fetch and sanity check quotes for each baseline ticker.  These quotes are
-    # derived from the shared memory manager's in-memory cache.
+    # Build a synthetic shared memory layout mapping each available ticker to a
+    # dummy list.  This mirrors the configuration that would normally be
+    # supplied by the data manager.
+    layout = {t: [0] for t in available}
+    reader = StockDataReader(client.HOST, client.PORT, shm_name=SHM_NAME, layout=layout)
+
+    # Fetch and sanity check quotes and history for each baseline ticker.  The
+    # history read ensures the shared-memory reader is properly configured.
     for t in BASELINE_TICKERS:
         quote = client.get_quote(t)
-        _assert(
-            quote.get("ticker") == t,
-            f"quote mismatch for {t}: {quote}",
-        )
+        _assert(quote.get("ticker") == t, f"quote mismatch for {t}: {quote}")
+        history = reader.get_stock(t)
+        _assert(isinstance(history, list), f"history missing for {t}")
+
     print("verified shared-memory baseline tickers ->", BASELINE_TICKERS)
 
 
