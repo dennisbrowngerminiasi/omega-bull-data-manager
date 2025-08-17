@@ -8,12 +8,14 @@ server and the shared-memory history.
 `client_example.py` is a reference implementation that demonstrates all
 supported operations:
 
-1. **`list_tickers`** – enumerate the tickers backed by shared memory.
-2. **`get_quote`** – obtain the most recent price, volume, and metadata for a
-ticker.
-3. **`get_snapshot_epoch`** – inspect the global seqlock state to detect when
+1. **`get_shm_name`** – discover the shared-memory segment name used for
+   historical data.
+2. **`list_tickers`** – enumerate the tickers backed by shared memory.
+3. **`get_quote`** – obtain the most recent price, volume, and metadata for a
+   ticker.
+4. **`get_snapshot_epoch`** – inspect the global seqlock state to detect when
    data was last written.
-4. **`StockDataReader.get_stock`** – read historical bars directly from shared
+5. **`StockDataReader.get_stock`** – read historical bars directly from shared
    memory.
 
 Every request sent to the server must include the fields `v`, `id`, and `type`.
@@ -32,6 +34,7 @@ python utils/client_example.py
 The script will:
 
 - Log all outbound requests and inbound responses.
+- Print the shared-memory segment name.
 - Print the available tickers.
 - Display the latest quote for the first ticker.
 - Show the snapshot epoch metadata.

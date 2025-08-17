@@ -45,6 +45,13 @@ def _assert(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def test_get_shm_name() -> str:
+    shm = client.get_shm_name()
+    _assert(isinstance(shm, str) and shm, "get_shm_name returned empty")
+    print("get_shm_name ->", shm)
+    return shm
+
+
 def test_list_tickers() -> None:
     tickers = client.list_tickers()
     _assert(isinstance(tickers, list) and tickers, "list_tickers returned no data")
@@ -126,13 +133,14 @@ def test_shared_memory_baseline() -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     print(f"Running smoke tests against {client.HOST}:{client.PORT}")
+    shm = test_get_shm_name()
     test_list_tickers()
     ticker = test_get_quote()
     test_get_snapshot_epoch()
     test_shared_memory_baseline()
     test_not_found()
     test_bad_request()
-    print("All smoke tests passed for ticker", ticker)
+    print("All smoke tests passed for ticker", ticker, "shm", shm)
 
 
 if __name__ == "__main__":

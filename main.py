@@ -18,7 +18,9 @@ def run():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     server = NDJSONServer(
-        shared_memory_manager.quote_cache, shared_memory_manager.snapshot_state
+        shared_memory_manager.quote_cache,
+        shared_memory_manager.snapshot_state,
+        shm_name=shared_memory_manager.shm_name,
     )
     srv = loop.run_until_complete(server.start("0.0.0.0", 12345))
     try:

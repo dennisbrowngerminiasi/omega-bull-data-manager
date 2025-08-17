@@ -9,6 +9,8 @@ state tracks the last update epoch and timestamp using a seqlock style scheme.
 The main entry point launches an NDJSON TCP server for discovery and point
 quotes:
 
+- `get_shm_name` — reveals the name of the shared-memory segment used for
+  historical bars
 - `list_tickers` — returns the set of tickers backed by shared memory
 - `get_quote` — retrieves the latest quote from the in-memory cache with stale
   detection against the configured freshness window
@@ -108,6 +110,7 @@ See `utils/client_example.py` and the accompanying `utils/README.md` for a
 reference implementation of all client operations.  The examples show how to:
 
 - enumerate tickers with ``list_tickers``
+- discover the shared-memory segment with ``get_shm_name``
 - fetch point quotes via ``get_quote``
 - inspect the snapshot state using ``get_snapshot_epoch``
 - read historical bars from shared memory with ``StockDataReader``
@@ -124,6 +127,7 @@ For validating a deployment, a set of client-side smoke tests lives in
 paths against a running server to ensure the full request/response cycle works
 as expected:
 
+- `get_shm_name`
 - `list_tickers`
 - `get_quote`
 - `get_snapshot_epoch`

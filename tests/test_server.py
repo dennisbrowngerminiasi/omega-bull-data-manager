@@ -79,9 +79,13 @@ def test_server_endpoints():
         fdm = FakeDataManager(fake_data)
         smm = SharedMemoryManager(shared_dict, lock, fdm)
 
-        server = NDJSONServer(smm.quote_cache, smm.snapshot_state)
+        server = NDJSONServer(smm.quote_cache, smm.snapshot_state, smm.shm_name)
         srv = await server.start("127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
+
+        # get_shm_name
+        resp = await send_request(port, {"v": 1, "id": "shm", "type": "get_shm_name"})
+        assert resp["data"]["shm_name"] == smm.shm_name
 
         # list_tickers
         resp = await send_request(port, {"v": 1, "id": "1", "type": "list_tickers"})

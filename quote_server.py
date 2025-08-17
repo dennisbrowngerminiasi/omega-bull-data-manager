@@ -13,10 +13,12 @@ class NDJSONServer:
     """Simple NDJSON request/response server for ticker discovery and quotes."""
 
     def __init__(self, quote_cache: Dict[str, Dict[str, Any]], snapshot_state: Dict[str, int],
+                 shm_name: str,
                  freshness_window_ms: int = 90_000, max_line_bytes: int = 65_536,
                  idle_timeout_s: int = 60, req_timeout_s: int = 5):
         self.quote_cache = quote_cache
         self.snapshot_state = snapshot_state
+        self.shm_name = shm_name
         self.freshness_window_ms = freshness_window_ms
         self.max_line_bytes = max_line_bytes
         self.idle_timeout_s = idle_timeout_s
@@ -109,6 +111,11 @@ class NDJSONServer:
                         response = {"v": 1, "id": req_id, "type": "response",
                                     "op": "get_snapshot_epoch", "data": data}
                         await self.send(writer, response, peer)
+                    elif req_type == "get_shm_name":
+                        data = {"shm_name": self.shm_name}
+                        response = {"v": 1, "id": req_id, "type": "response",
+                                    "op": "get_shm_name", "data": data}
+                        await self.send(writer, response, peer)
                     else:
                         await self.send_error(writer, req_id, "BAD_REQUEST", "Unknown request type", peer, request)
                 except Exception as exc:  # pragma: no cover - defensive
@@ -162,9 +169,15 @@ def main():  # pragma: no cover - CLI helper
     host, port = _parse_listen(args.listen)
     quote_cache: Dict[str, Dict[str, Any]] = {}
     snapshot_state = {"epoch": 0, "last_update_ms": 0}
-    server = NDJSONServer(quote_cache, snapshot_state,
-                          args.freshness_window_ms, args.max_line_bytes,
-                          args.idle_timeout_s, args.req_timeout_s)
+    server = NDJSONServer(
+        quote_cache,
+        snapshot_state,
+        shm_name="shm0",
+        freshness_window_ms=args.freshness_window_ms,
+        max_line_bytes=args.max_line_bytes,
+        idle_timeout_s=args.idle_timeout_s,
+        req_timeout_s=args.req_timeout_s,
+    )
 
     loop = asyncio.get_event_loop()
     srv = loop.run_until_complete(server.start(host, port))

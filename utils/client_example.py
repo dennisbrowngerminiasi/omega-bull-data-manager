@@ -15,6 +15,10 @@ supported by the NDJSON TCP service:
     Inspect the global snapshot seqlock state to understand when the
     shared memory was last updated.
 
+``get_shm_name``
+    Discover the name of the shared-memory segment used for historical
+    bars.  Clients need this value to attach directly for history reads.
+
 ``StockDataReader.get_stock``
     (client side) Read historical bars directly from the shared memory
     region.  This requires the shared memory name and layout mapping used
@@ -37,10 +41,11 @@ Every request sent to the server **must** include three fields:
 
 When executed as a script this module will:
 
-1. Print the list of available tickers.
-2. Retrieve and print the latest quote for the first ticker.
-3. Show the snapshot epoch metadata.
-4. Attempt to read historical bars for the first ticker using
+1. Print the shared-memory segment name.
+2. Print the list of available tickers.
+3. Retrieve and print the latest quote for the first ticker.
+4. Show the snapshot epoch metadata.
+5. Attempt to read historical bars for the first ticker using
    :class:`StockDataReader`.  If the shared memory configuration is not
    supplied, a helpful error is logged explaining what is missing.
 """
@@ -91,6 +96,13 @@ def get_snapshot_epoch() -> Dict[str, Any]:
     return resp.get("data", {})
 
 
+def get_shm_name() -> str:
+    """Return the shared-memory segment name advertised by the server."""
+    req = {"v": 1, "id": str(uuid.uuid4()), "type": "get_shm_name"}
+    resp = _send(req)
+    return resp.get("data", {}).get("shm_name", "")
+
+
 def get_history(reader: StockDataReader, ticker: str) -> List[Any]:
     """Return historical bars for ``ticker`` using ``reader``.
 
@@ -109,6 +121,8 @@ def get_history(reader: StockDataReader, ticker: str) -> List[Any]:
 
 if __name__ == "__main__":  # pragma: no cover - example usage
     logging.basicConfig(level=logging.INFO)
+    shm = get_shm_name()
+    print("Shared memory name:", shm)
     tickers = list_tickers()
     print("Tickers:", tickers)
 
