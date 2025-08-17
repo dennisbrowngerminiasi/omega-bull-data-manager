@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 
 import pytest
+from multiprocessing import shared_memory
 
 # Ensure repository root on path for module imports
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -77,7 +78,8 @@ def test_server_endpoints():
             FakeStockData("MSFT", 200.0, 20),
         ]
         fdm = FakeDataManager(fake_data)
-        smm = SharedMemoryManager(shared_dict, lock, fdm, shm_name="shm0")
+        shm = shared_memory.SharedMemory(create=True, size=10_000, name="test_shm")
+        smm = SharedMemoryManager(shared_dict, lock, fdm, shm)
 
         server = NDJSONServer(smm.quote_cache, smm.snapshot_state, smm.shm_name)
         srv = await server.start("127.0.0.1", 0)
@@ -132,6 +134,8 @@ def test_server_endpoints():
 
         srv.close()
         await srv.wait_closed()
+        shm.close()
+        shm.unlink()
 
     asyncio.run(run_test())
 
@@ -142,7 +146,7 @@ def test_get_shm_name_unconfigured():
         lock = Lock()
         fake_data = [FakeStockData("AAPL", 100.0, 10)]
         fdm = FakeDataManager(fake_data)
-        smm = SharedMemoryManager(shared_dict, lock, fdm, shm_name=None)
+        smm = SharedMemoryManager(shared_dict, lock, fdm, shm=None)
 
         server = NDJSONServer(smm.quote_cache, smm.snapshot_state, None)
         srv = await server.start("127.0.0.1", 0)

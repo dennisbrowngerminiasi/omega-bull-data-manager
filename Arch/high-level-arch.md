@@ -34,7 +34,10 @@ before consuming a snapshot, ensuring they never observe torn writes.
 ### Layout and Write Protocol
 
 Shared memory is represented by a process-safe dictionary where each key is the
-stock's ticker symbol.  Each value contains two top-level fields:
+stock's ticker symbol.  After each batch update the manager serializes this
+dictionary into the operating system's shared-memory segment (for example
+`shm0`) so external clients can map the region directly.  Each entry contains
+two top-level fields:
 
 ```
 {

@@ -1,4 +1,7 @@
 from threading import Lock
+import json
+
+from multiprocessing import shared_memory
 
 from shared_memory.shared_memory_manager import SharedMemoryManager
 
@@ -40,11 +43,13 @@ class FakeStockData:
 def test_write_data_populates_shared_memory_and_cache():
     shared_dict = {}
     lock = Lock()
-    smm = SharedMemoryManager(shared_dict, lock, DummyDataManager())
+    shm = shared_memory.SharedMemory(create=True, size=10_000, name="test_shm")
+    smm = SharedMemoryManager(shared_dict, lock, DummyDataManager(), shm)
 
     data = [FakeStockData("AAPL", 100.0, 10), FakeStockData("MSFT", 200.0, 20)]
     smm.write_data(data)
 
+    # Verify dictionary contents and quote cache
     for ticker, price in [("AAPL", 100.0), ("MSFT", 200.0)]:
         assert ticker in shared_dict
         entry = shared_dict[ticker]
@@ -53,8 +58,16 @@ def test_write_data_populates_shared_memory_and_cache():
         assert entry["header"]["last_update_ms"] > 0
         assert smm.quote_cache[ticker]["price"] == price
 
+    # Ensure payload persisted to the shared-memory segment
+    raw = bytes(shm.buf).rstrip(b"\x00")
+    stored = json.loads(raw.decode("utf-8"))
+    assert "AAPL" in stored and "MSFT" in stored
+
     assert smm.snapshot_state["epoch"] % 2 == 0
     first_epoch = smm.snapshot_state["epoch"]
 
     smm.write_data(data)
     assert smm.snapshot_state["epoch"] == first_epoch + 2
+
+    shm.close()
+    shm.unlink()

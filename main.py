@@ -20,12 +20,13 @@ def run():
     # but advertising a real segment prevents clients from failing with
     # ``FileNotFoundError`` when attempting to open the region.
     shm = shared_memory.SharedMemory(name="shm0", create=True, size=1_048_576)
+    logging.info("Created shared memory segment %s (%d bytes)", shm.name, shm.size)
 
     shared_memory_manager = SharedMemoryManager(
         shared_dict,
         lock,
         stock_data_manager,
-        shm_name=shm.name,
+        shm,
     )
 
     loop = asyncio.new_event_loop()

@@ -1,7 +1,12 @@
 from pathlib import Path
+import json
+import logging
 import os
 import time
 from typing import Optional
+
+from multiprocessing import shared_memory
+
 from stock.stock_data_interface import StockDataInterface
 
 
@@ -11,17 +16,26 @@ CSV_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 class SharedMemoryManager(StockDataInterface):
 
-    def __init__(self, shared_dict, lock, stock_data_manager, shm_name: Optional[str] = None):
+    def __init__(
+        self,
+        shared_dict,
+        lock,
+        stock_data_manager,
+        shm: Optional[shared_memory.SharedMemory] = None,
+    ):
         self.shared_dict = shared_dict
         self.lock = lock
         self.stock_data_manager = stock_data_manager
         self.stock_data_manager.register_listener(self)
 
-        # Optional name of a real shared-memory segment backing historical data.
-        # In environments that don't expose such a segment (e.g. tests or the
-        # lightweight integration mode), ``shm_name`` may be ``None`` and the
-        # NDJSON server will report that shared memory is unavailable.
-        self.shm_name = shm_name
+        # Optional real shared-memory segment backing historical data.  When
+        # provided, the manager serialises its shared_dict into this region so
+        # external clients can access the data directly.  In environments that
+        # do not supply a segment (e.g. unit tests without shared memory
+        # support), ``shm`` may be ``None`` and the NDJSON server will report
+        # that shared memory is unavailable.
+        self.shared_mem = shm
+        self.shm_name = shm.name if shm else None
 
         # In-memory cache for the most recent quote of each ticker. The server
         # reads from this structure to serve `get_quote` requests in O(1)
@@ -45,7 +59,7 @@ class SharedMemoryManager(StockDataInterface):
         self.write_data(all_stock_data)
 
     def write_data(self, stock_data_list):
-        print("Writing data to shared memory----------------------------------------------@@@@@@@")
+        logging.info("Writing %d tickers to shared memory", len(stock_data_list))
         try:
             with self.lock:
                 # Increment the global snapshot epoch to an odd number to signal
@@ -106,21 +120,54 @@ class SharedMemoryManager(StockDataInterface):
                                 "source": "shared_memory_manager",
                             }
                     except Exception as cache_error:
-                        print(f"Error updating quote cache for {key}: {cache_error}")
+                        logging.error("Error updating quote cache for %s: %s", key, cache_error)
 
                     try:
                         if stock_data.df is not None:
                             csv_path = CSV_DATA_DIR / f"{stock_data.ticker}.csv"
                             stock_data.df.to_csv(csv_path, index=False)
                     except Exception as csv_error:
-                        print(f"Error while saving CSV for {stock_data.ticker}: {csv_error}")
+                        logging.error(
+                            "Error while saving CSV for %s: %s",
+                            stock_data.ticker,
+                            csv_error,
+                        )
 
                 # Finalize global snapshot epoch to an even value and record the
                 # last update timestamp.
                 self.snapshot_state["last_update_ms"] = int(time.time() * 1000)
                 self.snapshot_state["epoch"] += 1
+                # Persist the entire shared dictionary into the shared-memory
+                # segment so external clients can consume it.  The payload is
+                # stored as JSON for simplicity.
+                if self.shared_mem is not None:
+                    self._persist_to_shared_memory()
         except Exception as e:
-            print(f"Error while writing data to shared memory: {e}")
+            logging.error("Error while writing data to shared memory: %s", e)
             raise
-        print("finished writing data to shared memory")
+        logging.info("Finished writing data to shared memory")
+
+    # ------------------------------------------------------------------
+    def _persist_to_shared_memory(self) -> None:
+        """Serialize ``shared_dict`` into ``self.shared_mem`` as JSON."""
+        payload = json.dumps(self.shared_dict, separators=(",", ":")).encode("utf-8")
+        if len(payload) > self.shared_mem.size:
+            logging.warning(
+                "Shared memory segment %s too small (%d bytes) for payload (%d bytes)",
+                self.shared_mem.name,
+                self.shared_mem.size,
+                len(payload),
+            )
+            payload = payload[: self.shared_mem.size]
+        # Zero out the buffer then write the payload.
+        self.shared_mem.buf[: len(payload)] = payload
+        if len(payload) < self.shared_mem.size:
+            self.shared_mem.buf[len(payload) : self.shared_mem.size] = b"\x00" * (
+                self.shared_mem.size - len(payload)
+            )
+        logging.info(
+            "Persisted %d bytes to shared memory segment %s",
+            len(payload),
+            self.shared_mem.name,
+        )
 
