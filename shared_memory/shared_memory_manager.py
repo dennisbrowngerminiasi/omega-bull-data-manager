@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import time
+from typing import Optional
 from stock.stock_data_interface import StockDataInterface
 
 
@@ -10,7 +11,7 @@ CSV_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 class SharedMemoryManager(StockDataInterface):
 
-    def __init__(self, shared_dict, lock, stock_data_manager, shm_name: str | None = None):
+    def __init__(self, shared_dict, lock, stock_data_manager, shm_name: Optional[str] = None):
         self.shared_dict = shared_dict
         self.lock = lock
         self.stock_data_manager = stock_data_manager

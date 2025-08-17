@@ -16,7 +16,7 @@ class NDJSONServer:
         self,
         quote_cache: Dict[str, Dict[str, Any]],
         snapshot_state: Dict[str, int],
-        shm_name: str | None,
+        shm_name: Optional[str],
         freshness_window_ms: int = 90_000,
         max_line_bytes: int = 65_536,
         idle_timeout_s: int = 60,
