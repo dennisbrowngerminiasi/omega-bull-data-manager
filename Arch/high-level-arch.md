@@ -68,6 +68,11 @@ The data manager's `write_data` method performs the following steps:
 3. After all tickers are processed, update the global `last_update_ms`, bump
    the global `epoch` to the next even value, and release the lock.
 
+For troubleshooting, the manager logs each global epoch transition at INFO
+level when a batch write begins and commits.  Per‑ticker epoch changes are
+emitted at DEBUG level, allowing operators to trace how individual entries are
+updated without overwhelming the default logs.
+
 This seqlock pattern guarantees readers either see a fully written snapshot or
 retry until one is available.
 

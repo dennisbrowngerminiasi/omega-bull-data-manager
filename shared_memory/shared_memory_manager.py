@@ -67,6 +67,9 @@ class SharedMemoryManager(StockDataInterface):
                 # that an update is in progress. Readers of the shared memory can
                 # detect this and retry until the epoch becomes even again.
                 self.snapshot_state["epoch"] += 1
+                logging.info(
+                    "Global epoch %d start", self.snapshot_state["epoch"]
+                )
 
                 # Use the actual ticker symbol as the key in shared memory so clients
                 # can access stock data by the expected ticker name instead of a
@@ -95,6 +98,11 @@ class SharedMemoryManager(StockDataInterface):
                     # Mark the entry as being written by incrementing the epoch to
                     # an odd number before publishing any changes.
                     entry["header"]["epoch"] += 1
+                    logging.debug(
+                        "Ticker %s epoch %d (writing)",
+                        key,
+                        entry["header"]["epoch"],
+                    )
                     self.shared_dict[key] = entry
 
                     data_dict = stock_data.to_serializable_dict()
@@ -104,6 +112,11 @@ class SharedMemoryManager(StockDataInterface):
                     entry["header"]["last_update_ms"] = now_ms
                     entry["header"]["epoch"] += 1
                     self.shared_dict[key] = entry
+                    logging.debug(
+                        "Ticker %s epoch %d (stable)",
+                        key,
+                        entry["header"]["epoch"],
+                    )
 
                     # Update in-memory quote cache for fast `get_quote` lookups.
                     try:
@@ -145,6 +158,9 @@ class SharedMemoryManager(StockDataInterface):
                 # Finalize global snapshot epoch to an even value signalling a
                 # stable snapshot.
                 self.snapshot_state["epoch"] += 1
+                logging.info(
+                    "Global epoch %d commit", self.snapshot_state["epoch"]
+                )
         except Exception as e:
             logging.error("Error while writing data to shared memory: %s", e)
             raise

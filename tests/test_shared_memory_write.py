@@ -1,6 +1,7 @@
 from threading import Lock
 import json
 from datetime import datetime
+import logging
 
 from multiprocessing import shared_memory
 
@@ -104,6 +105,23 @@ def test_write_data_serializes_datetime_fields():
     raw = bytes(shm.buf).rstrip(b"\x00")
     stored = json.loads(raw.decode("utf-8"))
     assert stored["AAPL"]["data"]["start_date"] == "2024-01-01T00:00:00"
+
+    shm.close()
+    shm.unlink()
+
+
+def test_epoch_logging(caplog):
+    shared_dict = {}
+    lock = Lock()
+    shm = shared_memory.SharedMemory(create=True, size=10_000, name="test_shm_log")
+    smm = SharedMemoryManager(shared_dict, lock, DummyDataManager(), shm)
+
+    data = [FakeStockData("AAPL", 100.0, 10)]
+    with caplog.at_level(logging.DEBUG):
+        smm.write_data(data)
+
+    assert any("Global epoch" in rec.message for rec in caplog.records)
+    assert any("Ticker AAPL" in rec.message for rec in caplog.records)
 
     shm.close()
     shm.unlink()
