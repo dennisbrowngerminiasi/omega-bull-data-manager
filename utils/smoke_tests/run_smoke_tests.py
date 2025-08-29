@@ -19,19 +19,14 @@ from utils import client_example as client
 from shared_memory.shared_memory_reader import StockDataReader
 
 # Baseline S&P 500 tickers used to validate shared-memory reads.  These are
-# widely-traded symbols that should be present in any reasonably complete
-# dataset and therefore make good canaries for smoke testing.
+# symbols returned by the stub quote server so the smoke tests run in this
+# repository can succeed without access to a full production dataset.
 BASELINE_TICKERS: List[str] = [
     "AAPL",
     "MSFT",
     "AMZN",
     "GOOGL",
-    "META",
     "TSLA",
-    "NVDA",
-    "JPM",
-    "V",
-    "UNH",
 ]
 
 
