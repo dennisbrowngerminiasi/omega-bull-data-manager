@@ -93,16 +93,19 @@ def test_bad_request() -> None:
     print("missing required fields ->", err)
 
 
-def test_shared_memory_baseline(shm_name: str) -> None:
+def test_shared_memory_baseline(shm_name: str | None = None) -> None:
     """Fetch quotes for a baseline set of tickers and verify SHM access.
 
-    ``shm_name`` is obtained from ``get_shm_name`` so the test exercises the
-    same discovery flow real clients follow.  The function first ensures that
-    all baseline tickers are advertised by the server.  It then retrieves a
-    quote for each ticker and treats the collected quotes as a stand-in for
-    shared memory contents.  This mirrors how clients would access historical
-    data via the shared-memory reader.
+    If ``shm_name`` is ``None`` the value is obtained from ``get_shm_name`` so
+    the test exercises the same discovery flow real clients follow.  The
+    function first ensures that all baseline tickers are advertised by the
+    server.  It then retrieves a quote for each ticker and treats the collected
+    quotes as a stand-in for shared memory contents.  This mirrors how clients
+    would access historical data via the shared-memory reader.
     """
+
+    if shm_name is None:
+        shm_name = test_get_shm_name()
 
     available = set(client.list_tickers())
     missing = [t for t in BASELINE_TICKERS if t not in available]
