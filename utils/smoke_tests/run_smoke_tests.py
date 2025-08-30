@@ -24,9 +24,24 @@ from shared_memory.shared_memory_reader import StockDataReader
 BASELINE_TICKERS: List[str] = [
     "AAPL",
     "MSFT",
-    "AMZN",
     "GOOGL",
+    "AMZN",
     "TSLA",
+    "BRK.B",
+    "NVDA",
+    "UNH",
+    "JNJ",
+    "V",
+    "XOM",
+    "WMT",
+    "JPM",
+    "META",
+    "PG",
+    "MA",
+    "CVX",
+    "HD",
+    "KO",
+    "PEP",
 ]
 
 

@@ -36,8 +36,12 @@ class StockDataManager:
         ]
 
         if INTEGRATION_TEST_MODE:
-            # Use a small subset of tickers and avoid any external connections.
-            self.etoro_tickers_list = self.sp500_tickers_list[:5]
+            # Generate in-memory data for the entire S&P subset without hitting
+            # external services.  Previous versions limited this to the first
+            # five symbols which caused smoke tests to see only a handful of
+            # tickers.  Using the full list keeps the behaviour closer to
+            # production while still avoiding network calls.
+            self.etoro_tickers_list = self.sp500_tickers_list
             self.ibkr_client = None
         else:  # pragma: no cover - requires external services
             self.etoro_tickers_list = EToroTickers().list
