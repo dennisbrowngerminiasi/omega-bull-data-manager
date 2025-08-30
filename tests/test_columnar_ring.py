@@ -20,8 +20,14 @@ def _build(name: str, capacity: int):
 def test_view_last_n_and_since():
     writer, reader = _build("shm_test", 5)
     try:
+        wi = last_ts = None
         for i in range(7):
-            writer.append("TEST", i, float(i), float(i), float(i), float(i), i * 10)
+            wi, last_ts = writer.append(
+                "TEST", i, float(i), float(i), float(i), float(i), i * 10
+            )
+        # After seven writes into a capacity-5 ring buffer the next write index
+        # wraps to ``2`` and the last timestamp reflects the final append.
+        assert (wi, last_ts) == (2, 6)
 
         ts, o, h, l, c, v = reader.view_last_n("TEST", 3)
         assert ts.tolist() == [4, 5, 6]
