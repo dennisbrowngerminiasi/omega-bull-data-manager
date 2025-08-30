@@ -3,6 +3,7 @@ import json
 from threading import Lock
 from pathlib import Path
 import sys
+import datetime as dt
 
 import pytest
 from multiprocessing import shared_memory
@@ -12,6 +13,8 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from shared_memory.shared_memory_manager import SharedMemoryManager
 from quote_server import NDJSONServer
+from shared_memory.fundamentals_cache import FundamentalsCache
+from server.data.fundamentals.ibkr_fundamentals import FundamentalsDTO
 
 
 class FakeStockData:
@@ -158,5 +161,55 @@ def test_get_shm_name_unconfigured():
 
         srv.close()
         await srv.wait_closed()
+
+    asyncio.run(run_test())
+
+
+def test_get_fundamentals_endpoint():
+    async def run_test():
+        shared_dict = {}
+        lock = Lock()
+        fake_data = [FakeStockData("AAPL", 100.0, 10)]
+        fdm = FakeDataManager(fake_data)
+        shm = shared_memory.SharedMemory(create=True, size=10_000, name="test_shm_fun")
+
+        cache = FundamentalsCache(ttl_seconds=60, fresh_ttl_seconds=60)
+        dto = FundamentalsDTO(
+            symbol="AAPL",
+            as_of=dt.datetime(2024, 1, 1),
+            source="TEST",
+            report_types_used=[],
+            company={"name": "Apple"},
+            statements={},
+            ratios={},
+            cap_table={},
+        )
+        cache.set("AAPL", dto)
+        cache.set("IBM", {"status": "unavailable", "reason": "subscription"})
+
+        smm = SharedMemoryManager(shared_dict, lock, fdm, shm, fundamentals_cache=cache)
+
+        server = NDJSONServer(
+            smm.quote_cache,
+            smm.snapshot_state,
+            smm.shm_name,
+            get_fundamentals=lambda sym: cache.get(sym),
+        )
+        srv = await server.start("127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+
+        resp = await send_request(port, {"v": 1, "id": "f1", "type": "get_fundamentals", "ticker": "AAPL"})
+        assert resp["data"]["company"]["name"] == "Apple"
+
+        resp = await send_request(port, {"v": 1, "id": "f2", "type": "get_fundamentals", "ticker": "MSFT"})
+        assert resp["data"]["status"] == "warming"
+
+        resp = await send_request(port, {"v": 1, "id": "f3", "type": "get_fundamentals", "ticker": "IBM"})
+        assert resp["data"]["status"] == "unavailable"
+
+        srv.close()
+        await srv.wait_closed()
+        shm.close()
+        shm.unlink()
 
     asyncio.run(run_test())

@@ -14,6 +14,7 @@ class NDJSONServer:
         quote_cache: Dict[str, Dict[str, Any]],
         snapshot_state: Dict[str, int],
         shm_name: Optional[str],
+        get_fundamentals=None,
         freshness_window_ms: int = 90_000,
         max_line_bytes: int = 65_536,
         idle_timeout_s: int = 60,
@@ -22,6 +23,7 @@ class NDJSONServer:
         self.quote_cache = quote_cache
         self.snapshot_state = snapshot_state
         self.shm_name = shm_name
+        self.get_fundamentals = get_fundamentals
         self.freshness_window_ms = freshness_window_ms
         self.max_line_bytes = max_line_bytes
         self.idle_timeout_s = idle_timeout_s
@@ -134,6 +136,44 @@ class NDJSONServer:
                                 "data": data,
                             }
                             await self.send(writer, response, peer)
+                    elif req_type == "get_fundamentals":
+                        if self.get_fundamentals is None:
+                            data = {"status": "disabled"}
+                        else:
+                            ticker = request.get("ticker")
+                            if not ticker:
+                                await self.send_error(
+                                    writer,
+                                    req_id,
+                                    "BAD_REQUEST",
+                                    "Missing ticker",
+                                    peer,
+                                    request,
+                                )
+                                continue
+                            f = self.get_fundamentals(ticker)
+                            if f is None:
+                                data = {"status": "warming"}
+                            elif isinstance(f, dict) and "status" in f:
+                                data = f
+                            else:
+                                data = {
+                                    "symbol": f.symbol,
+                                    "as_of": f.as_of.isoformat(),
+                                    "source": f.source,
+                                    "company": f.company,
+                                    "statements": f.statements,
+                                    "ratios": f.ratios,
+                                    "cap_table": f.cap_table,
+                                }
+                        response = {
+                            "v": 1,
+                            "id": req_id,
+                            "type": "response",
+                            "op": "get_fundamentals",
+                            "data": data,
+                        }
+                        await self.send(writer, response, peer)
                     else:
                         await self.send_error(writer, req_id, "BAD_REQUEST", "Unknown request type", peer, request)
                 except Exception as exc:  # pragma: no cover - defensive

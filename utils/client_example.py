@@ -93,6 +93,25 @@ def get_quote(ticker: str) -> Dict[str, Any]:
     return resp.get("data", {})
 
 
+def get_fundamentals(ticker: str, fresh: bool = False) -> Dict[str, Any]:
+    """Fetch cached fundamentals for ``ticker``.
+
+    If ``fresh`` is True the server is asked to refresh the data in the
+    background but the response still returns any cached value immediately.
+    """
+
+    req = {
+        "v": 1,
+        "id": str(uuid.uuid4()),
+        "type": "get_fundamentals",
+        "ticker": ticker,
+    }
+    if fresh:
+        req["fresh"] = True
+    resp = _send(req)
+    return resp.get("data", {})
+
+
 def get_snapshot_epoch() -> Dict[str, Any]:
     req = {"v": 1, "id": str(uuid.uuid4()), "type": "get_snapshot_epoch"}
     resp = _send(req)

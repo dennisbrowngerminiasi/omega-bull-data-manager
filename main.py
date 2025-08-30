@@ -7,6 +7,7 @@ from multiprocessing import shared_memory
 from shared_memory.shared_memory_manager import SharedMemoryManager
 from stock.stock_data_manager import StockDataManager
 from quote_server import NDJSONServer
+from shared_memory.fundamentals_cache import FundamentalsCache
 
 
 def _ensure_shared_memory(name: str, size: int) -> shared_memory.SharedMemory:
@@ -60,11 +61,13 @@ def run():
     SHM_SIZE = 64 * 1024 * 1024  # 64 MiB
     shm = _ensure_shared_memory("shm0", SHM_SIZE)
 
+    fundamentals_cache = FundamentalsCache(ttl_seconds=86400, fresh_ttl_seconds=3600)
     shared_memory_manager = SharedMemoryManager(
         shared_dict,
         lock,
         stock_data_manager,
         shm,
+        fundamentals_cache=fundamentals_cache,
     )
 
     loop = asyncio.new_event_loop()
@@ -73,6 +76,7 @@ def run():
         shared_memory_manager.quote_cache,
         shared_memory_manager.snapshot_state,
         shm_name=shared_memory_manager.shm_name,
+        get_fundamentals=lambda sym: fundamentals_cache.get(sym),
     )
     srv = loop.run_until_complete(server.start("0.0.0.0", 12345))
     try:

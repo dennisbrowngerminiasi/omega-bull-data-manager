@@ -23,6 +23,7 @@ class SharedMemoryManager(StockDataInterface):
         lock,
         stock_data_manager,
         shm: Optional[shared_memory.SharedMemory] = None,
+        fundamentals_cache=None,
     ):
         self.shared_dict = shared_dict
         self.lock = lock
@@ -49,6 +50,11 @@ class SharedMemoryManager(StockDataInterface):
         self.snapshot_state = {"epoch": 0, "last_update_ms": 0}
 
         self.writer_pid = os.getpid()
+
+        # Optional fundamentals cache. When provided, each ticker's
+        # fundamentals (if present in the cache) will be embedded in the
+        # serialized payload under ``data["fundamentals"]``.
+        self.fundamentals_cache = fundamentals_cache
 
         self.stock_data_manager.start_downloader_agent()
 
@@ -106,6 +112,22 @@ class SharedMemoryManager(StockDataInterface):
                     self.shared_dict[key] = entry
 
                     data_dict = stock_data.to_serializable_dict()
+
+                    # Inject fundamentals data from cache if available.
+                    if self.fundamentals_cache is not None:
+                        f = self.fundamentals_cache.get(key)
+                        if f is not None and not isinstance(f, dict):
+                            data_dict["fundamentals"] = {
+                                "symbol": f.symbol,
+                                "as_of": f.as_of.isoformat(),
+                                "source": f.source,
+                                "company": f.company,
+                                "statements": f.statements,
+                                "ratios": f.ratios,
+                                "cap_table": f.cap_table,
+                            }
+                        elif isinstance(f, dict):
+                            data_dict["fundamentals"] = f
 
                     now_ms = int(time.time() * 1000)
                     entry["data"] = data_dict
