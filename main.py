@@ -3,11 +3,17 @@ import logging
 import time
 from threading import Lock
 from multiprocessing import shared_memory
+from pathlib import Path
 
 from shared_memory.shared_memory_manager import SharedMemoryManager
 from stock.stock_data_manager import StockDataManager
 from quote_server import NDJSONServer
 from shared_memory.fundamentals_cache import FundamentalsCache
+from server.data.fundamentals.ibkr_fundamentals import (
+    _parse_snapshot,
+    _parse_financials,
+    _normalize,
+)
 
 
 def _ensure_shared_memory(name: str, size: int) -> shared_memory.SharedMemory:
@@ -62,6 +68,21 @@ def run():
     shm = _ensure_shared_memory("shm0", SHM_SIZE)
 
     fundamentals_cache = FundamentalsCache(ttl_seconds=86400, fresh_ttl_seconds=3600)
+    # Preload demo fundamentals from fixtures so example clients receive
+    # a populated response instead of a warmup placeholder.  This keeps the
+    # interactive demo functional without requiring a live IBKR connection.
+    try:  # pragma: no cover - best-effort setup for developer convenience
+        fixture_dir = Path(__file__).resolve().parent / "tests" / "fixtures" / "fundamentals"
+        snap_xml = (fixture_dir / "report_snapshot.xml").read_text()
+        fin_xml = (fixture_dir / "financial_statements.xml").read_text()
+        dto = _normalize(
+            _parse_snapshot(snap_xml, "AAPL"),
+            _parse_financials(fin_xml, "AAPL"),
+        )
+        fundamentals_cache.set("AAPL", dto)
+    except Exception as exc:
+        logging.info("Demo fundamentals unavailable: %s", exc)
+
     shared_memory_manager = SharedMemoryManager(
         shared_dict,
         lock,
