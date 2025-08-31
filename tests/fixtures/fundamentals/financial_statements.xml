@@ -1,0 +1,14 @@
+<FinancialStatements>
+  <IncomeStatement>
+    <EPS>5.0</EPS>
+    <EPSQ>1.2</EPSQ>
+    <RevenueTTM>1000</RevenueTTM>
+    <RevenueQ>250</RevenueQ>
+  </IncomeStatement>
+  <Dividends>
+    <DividendTTM>1.0</DividendTTM>
+    <DividendQ>0.25</DividendQ>
+    <DividendYield>0.02</DividendYield>
+    <PayoutRatio>0.30</PayoutRatio>
+  </Dividends>
+</FinancialStatements>

@@ -79,6 +79,22 @@ def test_get_quote() -> str:
     return ticker
 
 
+def test_get_fundamentals() -> None:
+    tickers = client.list_tickers()
+    _assert(tickers, "no tickers available for get_fundamentals")
+    ticker = tickers[0]
+    data = client.get_fundamentals(ticker)
+    _assert(isinstance(data, dict), "get_fundamentals returned non-dict")
+    if data.get("status"):
+        print(f"get_fundamentals({ticker}) ->", data)
+    else:
+        company = data.get("company", {}).get("name")
+        pe = data.get("ratios", {}).get("pe_ttm")
+        cap = data.get("cap_table", {}).get("market_cap")
+        summary = {"company": company, "pe_ttm": pe, "market_cap": cap}
+        print(f"get_fundamentals({ticker}) ->", summary)
+
+
 def test_get_snapshot_epoch() -> None:
     snap = client.get_snapshot_epoch()
     _assert("epoch" in snap and "last_update_ms" in snap, "snapshot missing fields")
@@ -147,6 +163,7 @@ def main() -> None:
     shm = test_get_shm_name()
     test_list_tickers()
     ticker = test_get_quote()
+    test_get_fundamentals()
     test_get_snapshot_epoch()
     test_shared_memory_baseline(shm)
     test_not_found()

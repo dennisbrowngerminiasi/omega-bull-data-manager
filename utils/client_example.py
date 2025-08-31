@@ -93,6 +93,25 @@ def get_quote(ticker: str) -> Dict[str, Any]:
     return resp.get("data", {})
 
 
+def get_fundamentals(ticker: str, fresh: bool = False) -> Dict[str, Any]:
+    """Fetch cached fundamentals for ``ticker``.
+
+    If ``fresh`` is True the server is asked to refresh the data in the
+    background but the response still returns any cached value immediately.
+    """
+
+    req = {
+        "v": 1,
+        "id": str(uuid.uuid4()),
+        "type": "get_fundamentals",
+        "ticker": ticker,
+    }
+    if fresh:
+        req["fresh"] = True
+    resp = _send(req)
+    return resp.get("data", {})
+
+
 def get_snapshot_epoch() -> Dict[str, Any]:
     req = {"v": 1, "id": str(uuid.uuid4()), "type": "get_snapshot_epoch"}
     resp = _send(req)
@@ -168,8 +187,9 @@ def read_history_with_epoch(shm_name: str, ticker: str, max_retries: int = 6) ->
         shm.close()
 
 
-if __name__ == "__main__":  # pragma: no cover - example usage
-    logging.basicConfig(level=logging.INFO)
+def main() -> None:  # pragma: no cover - example usage
+    """Interactive demonstration of the NDJSON client helpers."""
+
     shm = get_shm_name()
     print("Shared memory name:", shm)
     tickers = list_tickers()
@@ -179,6 +199,16 @@ if __name__ == "__main__":  # pragma: no cover - example usage
         first = tickers[0]
         quote = get_quote(first)
         print("Quote for", first, ":", quote)
+
+        fundamentals = get_fundamentals(first)
+        if fundamentals.get("status"):
+            print("Fundamentals for", first, ":", fundamentals)
+        else:
+            company = fundamentals.get("company", {}).get("name")
+            pe = fundamentals.get("ratios", {}).get("pe_ttm")
+            cap = fundamentals.get("cap_table", {}).get("market_cap")
+            summary = {"company": company, "pe_ttm": pe, "market_cap": cap}
+            print("Fundamentals for", first, ":", summary)
 
         # Demonstrate shared-memory history access.  In a production setup the
         # data manager advertises the ``shm_name`` which is passed to
@@ -198,3 +228,8 @@ if __name__ == "__main__":  # pragma: no cover - example usage
 
     snapshot = get_snapshot_epoch()
     print("Snapshot state:", snapshot)
+
+
+if __name__ == "__main__":  # pragma: no cover - example usage
+    logging.basicConfig(level=logging.INFO)
+    main()

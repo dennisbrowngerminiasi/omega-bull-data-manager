@@ -1,0 +1,28 @@
+<ReportSnapshot>
+  <Company>
+    <Name>Apple Inc</Name>
+    <Sector>Technology</Sector>
+    <Industry>Consumer Electronics</Industry>
+    <Exchange>NASDAQ</Exchange>
+    <Currency>USD</Currency>
+    <Country>US</Country>
+    <CIK>0000320193</CIK>
+  </Company>
+  <Ratios>
+    <PERatioTTM>20</PERatioTTM>
+    <ForwardPERatio>18</ForwardPERatio>
+    <ROE>0.25</ROE>
+    <ROC>0.20</ROC>
+    <ROA>0.15</ROA>
+    <PriceToBook>5</PriceToBook>
+    <BookValuePerShare>20</BookValuePerShare>
+    <CashPerShare>10</CashPerShare>
+    <EVToEBITDA>12</EVToEBITDA>
+    <Beta>1.1</Beta>
+  </Ratios>
+  <CapTable>
+    <MarketCap>2000000000</MarketCap>
+    <SharesOutstanding>1000000000</SharesOutstanding>
+    <FloatShares>900000000</FloatShares>
+  </CapTable>
+</ReportSnapshot>
