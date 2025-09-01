@@ -53,6 +53,22 @@ class StockDataManager:
         self.ibkr_client.connect('127.0.0.1', 7496, clientId=1)
         print("Connected to IBKR TWS: " + str(self.ibkr_client.isConnected()))
 
+    def disconnect_from_ibkr_tws(self):
+        """Close the connection to IBKR if one is active.
+
+        IBKR allows only a single client connection.  When an external client
+        wishes to take ownership, the server can relinquish its connection via
+        this method.  In integration-test mode no real connection exists so the
+        method becomes a no-op.
+        """
+        if INTEGRATION_TEST_MODE:
+            self.ibkr_client = None
+            return
+        if self.ibkr_client is not None and self.ibkr_client.isConnected():
+            print("Disconnecting from IBKR TWS")
+            self.ibkr_client.disconnect()
+            print("Disconnected from IBKR TWS: " + str(self.ibkr_client.isConnected()))
+
     def start_downloader_agent(self):
         print("Start downloader agent")
         if INTEGRATION_TEST_MODE:

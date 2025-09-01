@@ -73,6 +73,7 @@ def run():
         shared_memory_manager.quote_cache,
         shared_memory_manager.snapshot_state,
         shm_name=shared_memory_manager.shm_name,
+        stock_data_manager=stock_data_manager,
     )
     srv = loop.run_until_complete(server.start("0.0.0.0", 12345))
     try:

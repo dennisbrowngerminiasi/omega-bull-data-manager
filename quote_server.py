@@ -14,6 +14,7 @@ class NDJSONServer:
         quote_cache: Dict[str, Dict[str, Any]],
         snapshot_state: Dict[str, int],
         shm_name: Optional[str],
+        stock_data_manager: Optional[Any] = None,
         freshness_window_ms: int = 90_000,
         max_line_bytes: int = 65_536,
         idle_timeout_s: int = 60,
@@ -22,6 +23,8 @@ class NDJSONServer:
         self.quote_cache = quote_cache
         self.snapshot_state = snapshot_state
         self.shm_name = shm_name
+        self.stock_data_manager = stock_data_manager
+        self.ibkr_reserved = False
         self.freshness_window_ms = freshness_window_ms
         self.max_line_bytes = max_line_bytes
         self.idle_timeout_s = idle_timeout_s
@@ -132,6 +135,56 @@ class NDJSONServer:
                                 "type": "response",
                                 "op": "get_shm_name",
                                 "data": data,
+                            }
+                            await self.send(writer, response, peer)
+                    elif req_type == "acquire_ibkr":
+                        if self.ibkr_reserved:
+                            await self.send_error(
+                                writer,
+                                req_id,
+                                "CONFLICT",
+                                "IBKR connection already reserved",
+                                peer,
+                                request,
+                            )
+                        else:
+                            if self.stock_data_manager is not None:
+                                try:
+                                    self.stock_data_manager.disconnect_from_ibkr_tws()
+                                except AttributeError:
+                                    pass
+                            self.ibkr_reserved = True
+                            response = {
+                                "v": 1,
+                                "id": req_id,
+                                "type": "response",
+                                "op": "acquire_ibkr",
+                                "data": {"status": "acquired"},
+                            }
+                            await self.send(writer, response, peer)
+                    elif req_type == "release_ibkr":
+                        if not self.ibkr_reserved:
+                            await self.send_error(
+                                writer,
+                                req_id,
+                                "BAD_REQUEST",
+                                "IBKR connection not reserved",
+                                peer,
+                                request,
+                            )
+                        else:
+                            if self.stock_data_manager is not None:
+                                try:
+                                    self.stock_data_manager.connect_to_ibkr_tws()
+                                except AttributeError:
+                                    pass
+                            self.ibkr_reserved = False
+                            response = {
+                                "v": 1,
+                                "id": req_id,
+                                "type": "response",
+                                "op": "release_ibkr",
+                                "data": {"status": "released"},
                             }
                             await self.send(writer, response, peer)
                     else:
