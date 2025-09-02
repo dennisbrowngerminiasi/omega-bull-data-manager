@@ -59,7 +59,8 @@ class StockDataManager:
         except Exception as e:  # pragma: no cover - requires real IBKR
             print(f"Failed to connect to IBKR TWS: {e}")
             self.notify_listeners_on_ibkr_connection_failed()
-            raise
+            return False
+        return True
 
     def disconnect_from_ibkr_tws(self):
         """Close the connection to IBKR if one is active.

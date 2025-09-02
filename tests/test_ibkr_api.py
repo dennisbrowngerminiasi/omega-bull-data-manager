@@ -140,3 +140,33 @@ def test_server_requests_release_on_failure():
         shm.unlink()
 
     asyncio.run(run_test())
+
+
+def test_stock_data_manager_survives_ibkr_startup_failure():
+    from stock import stock_data_manager as sdm
+
+    class FakeIB:
+        def connect(self, *args, **kwargs):
+            raise RuntimeError("already in use")
+
+        def isConnected(self):
+            return False
+
+    class FakeTickers:
+        def __init__(self):
+            self.list = []
+
+    original_mode = sdm.INTEGRATION_TEST_MODE
+    original_ib = sdm.IB
+    original_tickers = sdm.EToroTickers
+    sdm.INTEGRATION_TEST_MODE = False
+    sdm.IB = FakeIB
+    sdm.EToroTickers = FakeTickers
+
+    try:
+        dm = sdm.StockDataManager()
+        assert isinstance(dm.ibkr_client, FakeIB)
+    finally:
+        sdm.INTEGRATION_TEST_MODE = original_mode
+        sdm.IB = original_ib
+        sdm.EToroTickers = original_tickers
