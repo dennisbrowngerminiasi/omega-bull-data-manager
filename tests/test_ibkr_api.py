@@ -1,5 +1,4 @@
 import asyncio
-import json
 from threading import Lock
 from pathlib import Path
 import sys
@@ -10,6 +9,7 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from quote_server import NDJSONServer
 from shared_memory.shared_memory_manager import SharedMemoryManager
+from utils import client_example as client
 
 
 class DummyDataManager:
@@ -35,16 +35,6 @@ class DummyDataManager:
         return []
 
 
-async def send(port, payload):
-    reader, writer = await asyncio.open_connection("127.0.0.1", port)
-    writer.write(json.dumps(payload).encode() + b"\n")
-    await writer.drain()
-    resp = await reader.readline()
-    writer.close()
-    await writer.wait_closed()
-    return json.loads(resp.decode())
-
-
 def test_ibkr_acquire_release_flow():
     async def run_test():
         shared_dict = {}
@@ -62,31 +52,34 @@ def test_ibkr_acquire_release_flow():
         srv = await server.start("127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
 
+        client.HOST = "127.0.0.1"
+        client.PORT = port
+
         # acquire connection
-        resp = await send(port, {"v": 1, "id": "a1", "type": "acquire_ibkr"})
-        assert resp["data"]["status"] == "acquired"
+        resp = await asyncio.to_thread(client.acquire_ibkr)
+        assert resp["status"] == "acquired"
         assert dm.disconnect_called is True
 
         # second acquisition should conflict
-        resp = await send(port, {"v": 1, "id": "a2", "type": "acquire_ibkr"})
+        resp = await asyncio.to_thread(client._send, {"v": 1, "id": "a2", "type": "acquire_ibkr"})
         assert resp["type"] == "error"
         assert resp["error"]["code"] == "CONFLICT"
 
         # release connection
-        resp = await send(port, {"v": 1, "id": "r1", "type": "release_ibkr"})
-        assert resp["data"]["status"] == "released"
+        resp = await asyncio.to_thread(client.release_ibkr)
+        assert resp["status"] == "released"
         assert dm.connect_called is True
 
         # releasing again should error
-        resp = await send(port, {"v": 1, "id": "r2", "type": "release_ibkr"})
+        resp = await asyncio.to_thread(client._send, {"v": 1, "id": "r2", "type": "release_ibkr"})
         assert resp["type"] == "error"
         assert resp["error"]["code"] == "BAD_REQUEST"
 
         # acquisition denied during download
         dm.is_downloading = True
-        resp = await send(port, {"v": 1, "id": "a3", "type": "acquire_ibkr"})
-        assert resp["data"]["status"] == "denied"
-        assert resp["data"]["reason"] == "wait until stock download is finished"
+        resp = await asyncio.to_thread(client.acquire_ibkr)
+        assert resp["status"] == "denied"
+        assert resp["reason"] == "wait until stock download is finished"
         dm.is_downloading = False
 
         srv.close()

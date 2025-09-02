@@ -27,6 +27,11 @@ supported by the NDJSON TCP service:
     how a client would instantiate the reader once the shared-memory name
     is discovered.
 
+``acquire_ibkr`` / ``release_ibkr``
+    Coordinate use of the single Interactive Brokers connection.  A client
+    should call ``acquire_ibkr`` before connecting to Trader Workstation and
+    ``release_ibkr`` once finished so other processes may take over.
+
 Every request sent to the server **must** include three fields:
 
 ``v``
@@ -45,9 +50,11 @@ When executed as a script this module will:
 
 1. Print the shared-memory segment name.
 2. Print the list of available tickers.
-3. Retrieve and print the latest quote for the first ticker.
-4. Show the snapshot epoch metadata.
-5. Attempt to read historical bars for the first ticker using
+3. Acquire and release the IBKR connection as a demonstration of the
+   reservation workflow.
+4. Retrieve and print the latest quote for the first ticker.
+5. Show the snapshot epoch metadata.
+6. Attempt to read historical bars for the first ticker using
    :class:`StockDataReader` and a lower-level helper that explicitly
    demonstrates the seqlock epoch dance.
 """
@@ -95,6 +102,20 @@ def get_quote(ticker: str) -> Dict[str, Any]:
 
 def get_snapshot_epoch() -> Dict[str, Any]:
     req = {"v": 1, "id": str(uuid.uuid4()), "type": "get_snapshot_epoch"}
+    resp = _send(req)
+    return resp.get("data", {})
+
+
+def acquire_ibkr() -> Dict[str, Any]:
+    """Request exclusive access to the IBKR connection."""
+    req = {"v": 1, "id": str(uuid.uuid4()), "type": "acquire_ibkr"}
+    resp = _send(req)
+    return resp.get("data", {})
+
+
+def release_ibkr() -> Dict[str, Any]:
+    """Release a previously acquired IBKR connection."""
+    req = {"v": 1, "id": str(uuid.uuid4()), "type": "release_ibkr"}
     resp = _send(req)
     return resp.get("data", {})
 
@@ -174,6 +195,19 @@ if __name__ == "__main__":  # pragma: no cover - example usage
     print("Shared memory name:", shm)
     tickers = list_tickers()
     print("Tickers:", tickers)
+
+    # Demonstrate how to reserve the IBKR connection so the client can
+    # briefly take over the single allowed session.
+    ibkr = acquire_ibkr()
+    print("acquire_ibkr ->", ibkr)
+    if ibkr.get("status") == "acquired":
+        try:
+            print("IBKR connection reserved; connect to TWS here")
+        finally:
+            rel = release_ibkr()
+            print("release_ibkr ->", rel)
+    elif ibkr.get("status") == "denied":
+        print("IBKR reservation denied:", ibkr.get("reason"))
 
     if tickers:
         first = tickers[0]
