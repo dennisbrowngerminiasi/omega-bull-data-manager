@@ -56,3 +56,36 @@ code `BAD_REQUEST`.
 These endpoints allow multiple clients and the data manager to cooperate and
 avoid simultaneous IBKR connections.
 
+
+### Client integration example
+
+The snippet below shows how a Python client can coordinate access to the single IBKR session:
+
+```python
+import asyncio
+import json
+
+async def acquire_and_release():
+    reader, writer = await asyncio.open_connection("127.0.0.1", 12345)
+
+    # Ask the data manager to relinquish the IBKR connection
+    writer.write(b'{"v":1,"id":"acq","type":"acquire_ibkr"}\n')
+    await writer.drain()
+    resp = json.loads((await reader.readline()).decode())
+    if resp["data"]["status"] != "acquired":
+        raise RuntimeError(resp["data"].get("reason", "failed"))
+
+    # ... the client connects to IBKR here ...
+
+    # Return control back to the data manager
+    writer.write(b'{"v":1,"id":"rel","type":"release_ibkr"}\n')
+    await writer.drain()
+    print(json.loads((await reader.readline()).decode()))
+
+    writer.close()
+    await writer.wait_closed()
+
+asyncio.run(acquire_and_release())
+```
+
+Clients should always release the connection when finished so other processes can continue operating.
