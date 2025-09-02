@@ -29,6 +29,7 @@ class StockDataManager:
         self.scanner_listeners = []
         self.stock_data_list = []
         self.stop_event = False
+        self.is_downloading = False
 
         self.sp500_tickers_list = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BRK.B", "NVDA", "UNH", "JNJ", "V",
@@ -124,11 +125,13 @@ class StockDataManager:
 
     def notify_listeners_on_download_started(self):
         print("Notifying listeners on download started")
+        self.is_downloading = True
         for listener in self.scanner_listeners:
             listener.on_download_started()
 
     def notify_listeners_on_download_finished(self):
         print("Notifying listeners on download finished")
+        self.is_downloading = False
         for listener in self.scanner_listeners:
             listener.on_download_finished()
 

@@ -46,13 +46,16 @@ class FakeDataManager:
         self.scanner_listeners = []
         self.disconnect_called = False
         self.connect_called = False
+        self.is_downloading = False
 
     def register_listener(self, listener):
         self.scanner_listeners.append(listener)
 
     def start_downloader_agent(self):
+        self.is_downloading = True
         for l in self.scanner_listeners:
             l.on_download_started()
+        self.is_downloading = False
         for l in self.scanner_listeners:
             l.on_download_finished()
 
@@ -145,6 +148,14 @@ def test_server_endpoints():
         assert resp["error"]["code"] == "BAD_REQUEST"
         assert "id" in resp["error"]["message"]
         assert "type" in resp["error"]["message"]
+
+        # acquire IBKR denied during download
+        fdm.is_downloading = True
+        resp = await send_request(port, {"v": 1, "id": "acq0", "type": "acquire_ibkr"})
+        assert resp["data"]["status"] == "denied"
+        assert resp["data"]["reason"] == "wait until stock download is finished"
+        assert fdm.disconnect_called is False
+        fdm.is_downloading = False
 
         # acquire IBKR connection
         resp = await send_request(port, {"v": 1, "id": "acq", "type": "acquire_ibkr"})

@@ -148,20 +148,33 @@ class NDJSONServer:
                                 request,
                             )
                         else:
-                            if self.stock_data_manager is not None:
-                                try:
-                                    self.stock_data_manager.disconnect_from_ibkr_tws()
-                                except AttributeError:
-                                    pass
-                            self.ibkr_reserved = True
-                            response = {
-                                "v": 1,
-                                "id": req_id,
-                                "type": "response",
-                                "op": "acquire_ibkr",
-                                "data": {"status": "acquired"},
-                            }
-                            await self.send(writer, response, peer)
+                            if self.stock_data_manager is not None and getattr(self.stock_data_manager, "is_downloading", False):
+                                response = {
+                                    "v": 1,
+                                    "id": req_id,
+                                    "type": "response",
+                                    "op": "acquire_ibkr",
+                                    "data": {
+                                        "status": "denied",
+                                        "reason": "wait until stock download is finished",
+                                    },
+                                }
+                                await self.send(writer, response, peer)
+                            else:
+                                if self.stock_data_manager is not None:
+                                    try:
+                                        self.stock_data_manager.disconnect_from_ibkr_tws()
+                                    except AttributeError:
+                                        pass
+                                self.ibkr_reserved = True
+                                response = {
+                                    "v": 1,
+                                    "id": req_id,
+                                    "type": "response",
+                                    "op": "acquire_ibkr",
+                                    "data": {"status": "acquired"},
+                                }
+                                await self.send(writer, response, peer)
                     elif req_type == "release_ibkr":
                         if not self.ibkr_reserved:
                             await self.send_error(

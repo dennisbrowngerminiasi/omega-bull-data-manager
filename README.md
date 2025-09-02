@@ -29,6 +29,12 @@ If available the server responds:
 The client can now safely establish its own IBKR connection.  While reserved,
 additional `acquire_ibkr` requests return an error with code `CONFLICT`.
 
+If a stock download is in progress the request is denied:
+
+```json
+{"v":1, "id":"acq", "type":"response", "op":"acquire_ibkr", "data":{"status":"denied","reason":"wait until stock download is finished"}}
+```
+
 ### Release the IBKR connection
 
 After the client is done it should release the reservation so the data manager
