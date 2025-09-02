@@ -121,7 +121,7 @@ def test_server_requests_release_on_failure():
         resp = json.loads((await reader.readline()).decode())
         assert resp["data"]["status"] == "acquired"
 
-        dm.notify_ibkr_connection_failed()
+        await asyncio.get_running_loop().run_in_executor(None, dm.notify_ibkr_connection_failed)
         msg = json.loads((await reader.readline()).decode())
         assert msg["op"] == "release_ibkr"
         assert msg["data"]["status"] == "release_requested"

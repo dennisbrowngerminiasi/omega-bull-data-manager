@@ -32,6 +32,7 @@ class NDJSONServer:
         self.ibkr_reserved = False
         self._ibkr_owner_writer: Optional[asyncio.StreamWriter] = None
         self._ibkr_owner_peer = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.freshness_window_ms = freshness_window_ms
         self.max_line_bytes = max_line_bytes
         self.idle_timeout_s = idle_timeout_s
@@ -44,6 +45,7 @@ class NDJSONServer:
         """Start the TCP server and return the server instance."""
         server = await asyncio.start_server(self.handle_client, host, port)
         logger.info("NDJSON quote server listening on %s:%d", host, port)
+        self._loop = asyncio.get_running_loop()
         return server
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -263,13 +265,10 @@ class NDJSONServer:
     # ------------------------------------------------------------------
     def on_ibkr_connection_failed(self):
         """Called by the stock data manager when its IBKR connection fails."""
-        if self.ibkr_reserved and self._ibkr_owner_writer is not None:
-            try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._request_ibkr_release())
-            except RuntimeError:
-                # no running loop; ignore
-                pass
+        if self.ibkr_reserved and self._ibkr_owner_writer is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(
+                lambda: self._loop.create_task(self._request_ibkr_release())
+            )
 
     async def _request_ibkr_release(self):
         message = {
