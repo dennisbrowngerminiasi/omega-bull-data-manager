@@ -57,9 +57,11 @@ These endpoints allow multiple clients and the data manager to cooperate and
 avoid simultaneous IBKR connections.
 
 If the data manager cannot connect to Trader Workstation at startup because
-another process already holds the lone IBKR session, it logs the failure but
-continues running.  The active client can then release the connection via the
-`release_ibkr` flow described above.
+another process already holds the lone IBKR session, it logs the failure,
+continues running, and immediately asks the connected client to release its
+session via a `release_ibkr` message with `{"status":"release_requested"}`.
+The client should respond with the usual `release_ibkr` request once its own
+IBKR session has been dropped so the server can retry the connection.
 
 If the data manager loses its own Trader Workstation connection while a client
 holds the reservation, the server sends a `release_ibkr` message with

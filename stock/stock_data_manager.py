@@ -47,7 +47,6 @@ class StockDataManager:
         else:  # pragma: no cover - requires external services
             self.etoro_tickers_list = EToroTickers().list
             self.ibkr_client = IB()
-            self.connect_to_ibkr_tws()
 
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
