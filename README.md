@@ -63,6 +63,11 @@ session via a `release_ibkr` message with `{"status":"release_requested"}`.
 The client should respond with the usual `release_ibkr` request once its own
 IBKR session has been dropped so the server can retry the connection.
 
+Before each download cycle the data manager verifies that it is still
+connected to Trader Workstation.  If the connection has been taken by another
+process it again triggers a `release_ibkr` request and skips the download
+until the session becomes available.
+
 If the data manager loses its own Trader Workstation connection while a client
 holds the reservation, the server sends a `release_ibkr` message with
 `{"status":"release_requested"}` to the connected client.  Upon receiving this

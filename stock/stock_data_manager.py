@@ -94,6 +94,17 @@ class StockDataManager:
         print("Downloader agent started, periodicity: " + str(periodicity) + " seconds")
         time.sleep(1)  # Optional startup delay
         while not self.stop_event:
+            if not INTEGRATION_TEST_MODE:
+                # Ensure we hold a live IBKR connection before attempting the
+                # expensive download path.  If the connection is unavailable the
+                # manager asks the active client to release it via
+                # ``connect_to_ibkr_tws`` and skips this cycle.
+                if self.ibkr_client is None or not self.ibkr_client.isConnected():
+                    if not self.connect_to_ibkr_tws():
+                        print("Skipping download; IBKR not connected")
+                        time.sleep(periodicity)
+                        continue
+
             print("Downloading stock data")
             self.notify_listeners_on_download_started()
             self.stock_data_list = StockDataManager.download_stock_data(
@@ -111,6 +122,9 @@ class StockDataManager:
     @staticmethod
     def download_stock_data(stock_symbols_list, ibkr_client):
         stock_data_list = []
+
+        if ibkr_client is None or not ibkr_client.isConnected():
+            raise ValueError("IBKR client not connected")
 
         for stock_symbol in stock_symbols_list:
             try:
