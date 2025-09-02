@@ -15,6 +15,9 @@ supported operations:
 3. **`acquire_ibkr` / `release_ibkr`** – coordinate access to the single
    Interactive Brokers connection by reserving the session before connecting
    to Trader Workstation and releasing it when finished.
+   The server may also proactively send a `release_ibkr` message with
+   `{"status":"release_requested"}` if it loses its own connection, prompting
+   clients to drop their session and send the usual release request.
 4. **`get_quote`** – obtain the most recent price, volume, and metadata for a
    ticker.
 5. **`get_snapshot_epoch`** – inspect the global seqlock state to detect when

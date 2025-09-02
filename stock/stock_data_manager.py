@@ -51,8 +51,15 @@ class StockDataManager:
 
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
-        self.ibkr_client.connect('127.0.0.1', 7496, clientId=1)
-        print("Connected to IBKR TWS: " + str(self.ibkr_client.isConnected()))
+        try:
+            self.ibkr_client.connect('127.0.0.1', 7496, clientId=1)
+            print("Connected to IBKR TWS: " + str(self.ibkr_client.isConnected()))
+            if not self.ibkr_client.isConnected():
+                raise RuntimeError("IBKR connection failed")
+        except Exception as e:  # pragma: no cover - requires real IBKR
+            print(f"Failed to connect to IBKR TWS: {e}")
+            self.notify_listeners_on_ibkr_connection_failed()
+            raise
 
     def disconnect_from_ibkr_tws(self):
         """Close the connection to IBKR if one is active.
@@ -134,6 +141,13 @@ class StockDataManager:
         self.is_downloading = False
         for listener in self.scanner_listeners:
             listener.on_download_finished()
+
+    def notify_listeners_on_ibkr_connection_failed(self):
+        """Inform listeners that the IBKR connection was lost."""
+        for listener in self.scanner_listeners:
+            cb = getattr(listener, "on_ibkr_connection_failed", None)
+            if cb is not None:
+                cb()
 
     def register_listener(self, listener):
         print("Registering listener" + str(listener))

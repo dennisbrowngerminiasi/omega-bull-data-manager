@@ -56,6 +56,12 @@ code `BAD_REQUEST`.
 These endpoints allow multiple clients and the data manager to cooperate and
 avoid simultaneous IBKR connections.
 
+If the data manager loses its own Trader Workstation connection while a client
+holds the reservation, the server sends a `release_ibkr` message with
+`{"status":"release_requested"}` to the connected client.  Upon receiving this
+request, clients should drop their IBKR session and then send the usual
+`release_ibkr` request so the server can reconnect.
+
 
 ### Client integration example
 

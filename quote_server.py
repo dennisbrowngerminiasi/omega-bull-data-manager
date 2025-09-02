@@ -24,7 +24,14 @@ class NDJSONServer:
         self.snapshot_state = snapshot_state
         self.shm_name = shm_name
         self.stock_data_manager = stock_data_manager
+        if self.stock_data_manager is not None:
+            try:
+                self.stock_data_manager.register_listener(self)
+            except AttributeError:
+                pass
         self.ibkr_reserved = False
+        self._ibkr_owner_writer: Optional[asyncio.StreamWriter] = None
+        self._ibkr_owner_peer = None
         self.freshness_window_ms = freshness_window_ms
         self.max_line_bytes = max_line_bytes
         self.idle_timeout_s = idle_timeout_s
@@ -170,6 +177,8 @@ class NDJSONServer:
                                     except AttributeError:
                                         pass
                                 self.ibkr_reserved = True
+                                self._ibkr_owner_writer = writer
+                                self._ibkr_owner_peer = peer
                                 response = {
                                     "v": 1,
                                     "id": req_id,
@@ -198,6 +207,8 @@ class NDJSONServer:
                                 except AttributeError:
                                     pass
                             self.ibkr_reserved = False
+                            self._ibkr_owner_writer = None
+                            self._ibkr_owner_peer = None
                             response = {
                                 "v": 1,
                                 "id": req_id,
@@ -214,6 +225,9 @@ class NDJSONServer:
                     latency_ms = int((time.time() - start) * 1000)
                     logger.info("completed id=%s type=%s latency_ms=%d", req_id, req_type, latency_ms)
         finally:
+            if writer is self._ibkr_owner_writer:
+                self._ibkr_owner_writer = None
+                self._ibkr_owner_peer = None
             logger.info("Client disconnected: %s", peer)
             writer.close()
             await writer.wait_closed()
@@ -243,3 +257,26 @@ class NDJSONServer:
         }
         logger.warning("error to %s: %s (request=%s)", peer, error_obj, request)
         await self.send(writer, error_obj, peer)
+
+    # ------------------------------------------------------------------
+    # IBKR coordination helpers
+    # ------------------------------------------------------------------
+    def on_ibkr_connection_failed(self):
+        """Called by the stock data manager when its IBKR connection fails."""
+        if self.ibkr_reserved and self._ibkr_owner_writer is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._request_ibkr_release())
+            except RuntimeError:
+                # no running loop; ignore
+                pass
+
+    async def _request_ibkr_release(self):
+        message = {
+            "v": 1,
+            "id": None,
+            "type": "response",
+            "op": "release_ibkr",
+            "data": {"status": "release_requested"},
+        }
+        await self.send(self._ibkr_owner_writer, message, self._ibkr_owner_peer)
