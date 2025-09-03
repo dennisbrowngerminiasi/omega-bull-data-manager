@@ -172,10 +172,14 @@ class NDJSONServer:
                             else:
                                 if self.stock_data_manager is not None:
                                     try:
-                                        await asyncio.get_running_loop().run_in_executor(
-                                            None,
-                                            self.stock_data_manager.disconnect_from_ibkr_tws,
-                                        )
+                                        # Run the disconnect synchronously on
+                                        # the server thread so the ``ib_insync``
+                                        # client remains bound to a single
+                                        # event loop.  Offloading to a worker
+                                        # thread leads to "no current event
+                                        # loop" errors when subsequent
+                                        # requests reuse the connection.
+                                        self.stock_data_manager.disconnect_from_ibkr_tws()
                                     except AttributeError:
                                         pass
                                 self.ibkr_reserved = True
@@ -202,10 +206,10 @@ class NDJSONServer:
                         else:
                             if self.stock_data_manager is not None:
                                 try:
-                                    await asyncio.get_running_loop().run_in_executor(
-                                        None,
-                                        self.stock_data_manager.connect_to_ibkr_tws,
-                                    )
+                                    # Similarly, reconnect directly on this
+                                    # thread to ensure the ``ib_insync`` client
+                                    # attaches to the correct event loop.
+                                    self.stock_data_manager.connect_to_ibkr_tws()
                                 except AttributeError:
                                     pass
                             self.ibkr_reserved = False

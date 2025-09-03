@@ -60,19 +60,25 @@ class StockDataManager:
         for attempt in range(5):
             client_id = attempt + 1
             try:
-                # ``ib_insync.IB.connect`` expects to run inside an asyncio
-                # event loop.  When this method is invoked from a background
-                # thread (e.g., via ``run_in_executor``) there is no running
-                # loop, which previously triggered ``RuntimeWarning: coroutine
-                # 'IB.connectAsync' was never awaited``.  Running the
-                # asynchronous variant inside ``asyncio.run`` ensures a
-                # temporary loop is created so the call succeeds regardless of
-                # the calling context.
-                asyncio.run(
-                    self.ibkr_client.connectAsync(
-                        "127.0.0.1", 7496, clientId=client_id
+                # ``IB.connect`` sets up and stores its own event loop.  The
+                # previous implementation used ``asyncio.run`` to call
+                # ``connectAsync`` which closed the temporary loop once the call
+                # returned, leaving subsequent requests without a running loop
+                # and triggering "There is no current event loop" errors.
+                # Prefer the synchronous ``connect`` API when available so the
+                # loop persists.  Test doubles used in the suite only implement
+                # ``connectAsync``, so fall back to manually driving that
+                # coroutine in a dedicated loop for compatibility.
+                if hasattr(self.ibkr_client, "connect"):
+                    self.ibkr_client.connect("127.0.0.1", 7496, clientId=client_id)
+                else:  # pragma: no cover - used only by test doubles
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(
+                        self.ibkr_client.connectAsync(
+                            "127.0.0.1", 7496, clientId=client_id
+                        )
                     )
-                )
                 print(
                     "Connected to IBKR TWS: " + str(self.ibkr_client.isConnected())
                 )
