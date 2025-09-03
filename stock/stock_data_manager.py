@@ -1,3 +1,4 @@
+import asyncio
 import time
 import random
 from datetime import datetime, timedelta
@@ -51,7 +52,14 @@ class StockDataManager:
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
         try:
-            self.ibkr_client.connect('127.0.0.1', 7496, clientId=1)
+            # ``ib_insync.IB.connect`` expects to run inside an asyncio event
+            # loop.  When this method is invoked from a background thread (e.g.
+            # via ``run_in_executor``) there is no running loop, which previously
+            # triggered ``RuntimeWarning: coroutine 'IB.connectAsync' was never
+            # awaited``.  Running the asynchronous variant inside ``asyncio.run``
+            # ensures a temporary loop is created so the call succeeds regardless
+            # of the calling context.
+            asyncio.run(self.ibkr_client.connectAsync('127.0.0.1', 7496, clientId=1))
             print("Connected to IBKR TWS: " + str(self.ibkr_client.isConnected()))
             if not self.ibkr_client.isConnected():
                 raise RuntimeError("IBKR connection failed")
