@@ -44,18 +44,30 @@ class FakeDataManager:
     def __init__(self, stock_data_list):
         self.stock_data_list = stock_data_list
         self.scanner_listeners = []
+        self.disconnect_called = False
+        self.connect_called = False
+        self.is_downloading = False
 
     def register_listener(self, listener):
         self.scanner_listeners.append(listener)
 
     def start_downloader_agent(self):
+        self.is_downloading = True
         for l in self.scanner_listeners:
             l.on_download_started()
+        self.is_downloading = False
         for l in self.scanner_listeners:
             l.on_download_finished()
 
     def get_all_stock_data(self):
         return self.stock_data_list
+
+    # IBKR connection management stubs
+    def disconnect_from_ibkr_tws(self):
+        self.disconnect_called = True
+
+    def connect_to_ibkr_tws(self):
+        self.connect_called = True
 
 
 async def send_request(port, obj):
@@ -81,7 +93,12 @@ def test_server_endpoints():
         shm = shared_memory.SharedMemory(create=True, size=10_000, name="test_shm")
         smm = SharedMemoryManager(shared_dict, lock, fdm, shm)
 
-        server = NDJSONServer(smm.quote_cache, smm.snapshot_state, smm.shm_name)
+        server = NDJSONServer(
+            smm.quote_cache,
+            smm.snapshot_state,
+            smm.shm_name,
+            stock_data_manager=fdm,
+        )
         srv = await server.start("127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
 
@@ -132,6 +149,34 @@ def test_server_endpoints():
         assert "id" in resp["error"]["message"]
         assert "type" in resp["error"]["message"]
 
+        # acquire IBKR denied during download
+        fdm.is_downloading = True
+        resp = await send_request(port, {"v": 1, "id": "acq0", "type": "acquire_ibkr"})
+        assert resp["data"]["status"] == "denied"
+        assert resp["data"]["reason"] == "wait until stock download is finished"
+        assert fdm.disconnect_called is False
+        fdm.is_downloading = False
+
+        # acquire IBKR connection
+        resp = await send_request(port, {"v": 1, "id": "acq", "type": "acquire_ibkr"})
+        assert resp["data"]["status"] == "acquired"
+        assert fdm.disconnect_called is True
+
+        # acquiring again should fail
+        resp = await send_request(port, {"v": 1, "id": "acq2", "type": "acquire_ibkr"})
+        assert resp["type"] == "error"
+        assert resp["error"]["code"] == "CONFLICT"
+
+        # release IBKR connection
+        resp = await send_request(port, {"v": 1, "id": "rel", "type": "release_ibkr"})
+        assert resp["data"]["status"] == "released"
+        assert fdm.connect_called is True
+
+        # releasing again should fail
+        resp = await send_request(port, {"v": 1, "id": "rel2", "type": "release_ibkr"})
+        assert resp["type"] == "error"
+        assert resp["error"]["code"] == "BAD_REQUEST"
+
         srv.close()
         await srv.wait_closed()
         shm.close()
@@ -148,7 +193,12 @@ def test_get_shm_name_unconfigured():
         fdm = FakeDataManager(fake_data)
         smm = SharedMemoryManager(shared_dict, lock, fdm, shm=None)
 
-        server = NDJSONServer(smm.quote_cache, smm.snapshot_state, None)
+        server = NDJSONServer(
+            smm.quote_cache,
+            smm.snapshot_state,
+            None,
+            stock_data_manager=fdm,
+        )
         srv = await server.start("127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
 

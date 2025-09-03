@@ -1,3 +1,4 @@
+import asyncio
 import time
 import random
 from datetime import datetime, timedelta
@@ -29,6 +30,7 @@ class StockDataManager:
         self.scanner_listeners = []
         self.stock_data_list = []
         self.stop_event = False
+        self.is_downloading = False
 
         self.sp500_tickers_list = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BRK.B", "NVDA", "UNH", "JNJ", "V",
@@ -46,12 +48,71 @@ class StockDataManager:
         else:  # pragma: no cover - requires external services
             self.etoro_tickers_list = EToroTickers().list
             self.ibkr_client = IB()
-            self.connect_to_ibkr_tws()
+
 
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
-        self.ibkr_client.connect('127.0.0.1', 7496, clientId=1)
-        print("Connected to IBKR TWS: " + str(self.ibkr_client.isConnected()))
+
+        # ``ib_insync`` identifies clients by a small integer.  When one is
+        # already connected with the same ``clientId`` the TWS instance rejects
+        # subsequent connections with error 326.  To cope with lingering
+        # sessions, try a handful of different ids before giving up.
+        for attempt in range(5):
+            client_id = attempt + 1
+            try:
+                # ``IB.connect`` sets up and stores its own event loop.  The
+                # previous implementation used ``asyncio.run`` to call
+                # ``connectAsync`` which closed the temporary loop once the call
+                # returned, leaving subsequent requests without a running loop
+                # and triggering "There is no current event loop" errors.
+                # Prefer the synchronous ``connect`` API when available so the
+                # loop persists.  Test doubles used in the suite only implement
+                # ``connectAsync``, so fall back to manually driving that
+                # coroutine in a dedicated loop for compatibility.
+                if hasattr(self.ibkr_client, "connect"):
+                    self.ibkr_client.connect("127.0.0.1", 7496, clientId=client_id)
+                else:  # pragma: no cover - used only by test doubles
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    loop.run_until_complete(
+                        self.ibkr_client.connectAsync(
+                            "127.0.0.1", 7496, clientId=client_id
+                        )
+                    )
+                print(
+                    "Connected to IBKR TWS: " + str(self.ibkr_client.isConnected())
+                )
+                if not self.ibkr_client.isConnected():
+                    raise RuntimeError("IBKR connection failed")
+                return True
+            except Exception as e:  # pragma: no cover - requires real IBKR
+                msg = str(e).lower()
+                if "client id is already in use" in msg and attempt < 4:
+                    print(
+                        f"Client ID {client_id} in use, retrying with a different id"
+                    )
+                    continue
+                print(f"Failed to connect to IBKR TWS: {e}")
+                break
+
+        self.notify_listeners_on_ibkr_connection_failed()
+        return False
+
+    def disconnect_from_ibkr_tws(self):
+        """Close the connection to IBKR if one is active.
+
+        IBKR allows only a single client connection.  When an external client
+        wishes to take ownership, the server can relinquish its connection via
+        this method.  In integration-test mode no real connection exists so the
+        method becomes a no-op.
+        """
+        if INTEGRATION_TEST_MODE:
+            self.ibkr_client = None
+            return
+        if self.ibkr_client is not None and self.ibkr_client.isConnected():
+            print("Disconnecting from IBKR TWS")
+            self.ibkr_client.disconnect()
+            print("Disconnected from IBKR TWS: " + str(self.ibkr_client.isConnected()))
 
     def start_downloader_agent(self):
         print("Start downloader agent")
@@ -70,6 +131,17 @@ class StockDataManager:
         print("Downloader agent started, periodicity: " + str(periodicity) + " seconds")
         time.sleep(1)  # Optional startup delay
         while not self.stop_event:
+            if not INTEGRATION_TEST_MODE:
+                # Ensure we hold a live IBKR connection before attempting the
+                # expensive download path.  If the connection is unavailable the
+                # manager asks the active client to release it via
+                # ``connect_to_ibkr_tws`` and skips this cycle.
+                if self.ibkr_client is None or not self.ibkr_client.isConnected():
+                    if not self.connect_to_ibkr_tws():
+                        print("Skipping download; IBKR not connected")
+                        time.sleep(periodicity)
+                        continue
+
             print("Downloading stock data")
             self.notify_listeners_on_download_started()
             self.stock_data_list = StockDataManager.download_stock_data(
@@ -87,6 +159,9 @@ class StockDataManager:
     @staticmethod
     def download_stock_data(stock_symbols_list, ibkr_client):
         stock_data_list = []
+
+        if ibkr_client is None or not ibkr_client.isConnected():
+            raise ValueError("IBKR client not connected")
 
         for stock_symbol in stock_symbols_list:
             try:
@@ -108,13 +183,22 @@ class StockDataManager:
 
     def notify_listeners_on_download_started(self):
         print("Notifying listeners on download started")
+        self.is_downloading = True
         for listener in self.scanner_listeners:
             listener.on_download_started()
 
     def notify_listeners_on_download_finished(self):
         print("Notifying listeners on download finished")
+        self.is_downloading = False
         for listener in self.scanner_listeners:
             listener.on_download_finished()
+
+    def notify_listeners_on_ibkr_connection_failed(self):
+        """Inform listeners that the IBKR connection was lost."""
+        for listener in self.scanner_listeners:
+            cb = getattr(listener, "on_ibkr_connection_failed", None)
+            if cb is not None:
+                cb()
 
     def register_listener(self, listener):
         print("Registering listener" + str(listener))

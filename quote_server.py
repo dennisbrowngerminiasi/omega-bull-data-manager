@@ -14,6 +14,7 @@ class NDJSONServer:
         quote_cache: Dict[str, Dict[str, Any]],
         snapshot_state: Dict[str, int],
         shm_name: Optional[str],
+        stock_data_manager: Optional[Any] = None,
         freshness_window_ms: int = 90_000,
         max_line_bytes: int = 65_536,
         idle_timeout_s: int = 60,
@@ -22,6 +23,16 @@ class NDJSONServer:
         self.quote_cache = quote_cache
         self.snapshot_state = snapshot_state
         self.shm_name = shm_name
+        self.stock_data_manager = stock_data_manager
+        if self.stock_data_manager is not None:
+            try:
+                self.stock_data_manager.register_listener(self)
+            except AttributeError:
+                pass
+        self.ibkr_reserved = False
+        self._ibkr_owner_writer: Optional[asyncio.StreamWriter] = None
+        self._ibkr_owner_peer = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.freshness_window_ms = freshness_window_ms
         self.max_line_bytes = max_line_bytes
         self.idle_timeout_s = idle_timeout_s
@@ -34,6 +45,7 @@ class NDJSONServer:
         """Start the TCP server and return the server instance."""
         server = await asyncio.start_server(self.handle_client, host, port)
         logger.info("NDJSON quote server listening on %s:%d", host, port)
+        self._loop = asyncio.get_running_loop()
         return server
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -134,6 +146,83 @@ class NDJSONServer:
                                 "data": data,
                             }
                             await self.send(writer, response, peer)
+                    elif req_type == "acquire_ibkr":
+                        if self.ibkr_reserved:
+                            await self.send_error(
+                                writer,
+                                req_id,
+                                "CONFLICT",
+                                "IBKR connection already reserved",
+                                peer,
+                                request,
+                            )
+                        else:
+                            if self.stock_data_manager is not None and getattr(self.stock_data_manager, "is_downloading", False):
+                                response = {
+                                    "v": 1,
+                                    "id": req_id,
+                                    "type": "response",
+                                    "op": "acquire_ibkr",
+                                    "data": {
+                                        "status": "denied",
+                                        "reason": "wait until stock download is finished",
+                                    },
+                                }
+                                await self.send(writer, response, peer)
+                            else:
+                                if self.stock_data_manager is not None:
+                                    try:
+                                        # Run the disconnect synchronously on
+                                        # the server thread so the ``ib_insync``
+                                        # client remains bound to a single
+                                        # event loop.  Offloading to a worker
+                                        # thread leads to "no current event
+                                        # loop" errors when subsequent
+                                        # requests reuse the connection.
+                                        self.stock_data_manager.disconnect_from_ibkr_tws()
+                                    except AttributeError:
+                                        pass
+                                self.ibkr_reserved = True
+                                self._ibkr_owner_writer = writer
+                                self._ibkr_owner_peer = peer
+                                response = {
+                                    "v": 1,
+                                    "id": req_id,
+                                    "type": "response",
+                                    "op": "acquire_ibkr",
+                                    "data": {"status": "acquired"},
+                                }
+                                await self.send(writer, response, peer)
+                    elif req_type == "release_ibkr":
+                        if not self.ibkr_reserved:
+                            await self.send_error(
+                                writer,
+                                req_id,
+                                "BAD_REQUEST",
+                                "IBKR connection not reserved",
+                                peer,
+                                request,
+                            )
+                        else:
+                            if self.stock_data_manager is not None:
+                                try:
+                                    # Similarly, reconnect directly on this
+                                    # thread to ensure the ``ib_insync`` client
+                                    # attaches to the correct event loop.
+                                    self.stock_data_manager.connect_to_ibkr_tws()
+                                except AttributeError:
+                                    pass
+                            self.ibkr_reserved = False
+                            self._ibkr_owner_writer = None
+                            self._ibkr_owner_peer = None
+                            response = {
+                                "v": 1,
+                                "id": req_id,
+                                "type": "response",
+                                "op": "release_ibkr",
+                                "data": {"status": "released"},
+                            }
+                            await self.send(writer, response, peer)
                     else:
                         await self.send_error(writer, req_id, "BAD_REQUEST", "Unknown request type", peer, request)
                 except Exception as exc:  # pragma: no cover - defensive
@@ -142,6 +231,9 @@ class NDJSONServer:
                     latency_ms = int((time.time() - start) * 1000)
                     logger.info("completed id=%s type=%s latency_ms=%d", req_id, req_type, latency_ms)
         finally:
+            if writer is self._ibkr_owner_writer:
+                self._ibkr_owner_writer = None
+                self._ibkr_owner_peer = None
             logger.info("Client disconnected: %s", peer)
             writer.close()
             await writer.wait_closed()
@@ -171,3 +263,23 @@ class NDJSONServer:
         }
         logger.warning("error to %s: %s (request=%s)", peer, error_obj, request)
         await self.send(writer, error_obj, peer)
+
+    # ------------------------------------------------------------------
+    # IBKR coordination helpers
+    # ------------------------------------------------------------------
+    def on_ibkr_connection_failed(self):
+        """Called by the stock data manager when its IBKR connection fails."""
+        if self.ibkr_reserved and self._ibkr_owner_writer is not None and self._loop is not None:
+            self._loop.call_soon_threadsafe(
+                lambda: self._loop.create_task(self._request_ibkr_release())
+            )
+
+    async def _request_ibkr_release(self):
+        message = {
+            "v": 1,
+            "id": None,
+            "type": "response",
+            "op": "release_ibkr",
+            "data": {"status": "release_requested"},
+        }
+        await self.send(self._ibkr_owner_writer, message, self._ibkr_owner_peer)

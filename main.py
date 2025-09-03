@@ -73,8 +73,14 @@ def run():
         shared_memory_manager.quote_cache,
         shared_memory_manager.snapshot_state,
         shm_name=shared_memory_manager.shm_name,
+        stock_data_manager=stock_data_manager,
     )
     srv = loop.run_until_complete(server.start("0.0.0.0", 12345))
+    # Attempt to connect to IBKR once the server is ready so any failure can
+    # be reported to connected clients via the acquire/release API.  Run the
+    # connection on the server's own thread to keep the ``ib_insync`` event
+    # loop bound to the same thread that will later issue requests.
+    loop.call_soon(stock_data_manager.connect_to_ibkr_tws)
     try:
         loop.run_forever()
     except KeyboardInterrupt:  # pragma: no cover - graceful shutdown

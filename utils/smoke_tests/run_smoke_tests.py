@@ -103,6 +103,20 @@ def test_bad_request() -> None:
     print("missing required fields ->", err)
 
 
+def test_ibkr_reservation() -> None:
+    resp = client.acquire_ibkr()
+    print("acquire_ibkr ->", resp)
+    status = resp.get("status")
+    if status == "acquired":
+        rel = client.release_ibkr()
+        print("release_ibkr ->", rel)
+        _assert(rel.get("status") == "released", f"unexpected release response: {rel}")
+    elif status == "denied":
+        print("reservation denied:", resp.get("reason"))
+    else:
+        _assert(False, f"unexpected acquire_ibkr response: {resp}")
+
+
 def test_shared_memory_baseline(shm_name: str | None = None) -> None:
     """Fetch quotes for a baseline set of tickers and verify SHM access.
 
@@ -148,6 +162,7 @@ def main() -> None:
     test_list_tickers()
     ticker = test_get_quote()
     test_get_snapshot_epoch()
+    test_ibkr_reservation()
     test_shared_memory_baseline(shm)
     test_not_found()
     test_bad_request()
