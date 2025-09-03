@@ -49,25 +49,48 @@ class StockDataManager:
             self.etoro_tickers_list = EToroTickers().list
             self.ibkr_client = IB()
 
+
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
-        try:
-            # ``ib_insync.IB.connect`` expects to run inside an asyncio event
-            # loop.  When this method is invoked from a background thread (e.g.
-            # via ``run_in_executor``) there is no running loop, which previously
-            # triggered ``RuntimeWarning: coroutine 'IB.connectAsync' was never
-            # awaited``.  Running the asynchronous variant inside ``asyncio.run``
-            # ensures a temporary loop is created so the call succeeds regardless
-            # of the calling context.
-            asyncio.run(self.ibkr_client.connectAsync('127.0.0.1', 7496, clientId=1))
-            print("Connected to IBKR TWS: " + str(self.ibkr_client.isConnected()))
-            if not self.ibkr_client.isConnected():
-                raise RuntimeError("IBKR connection failed")
-        except Exception as e:  # pragma: no cover - requires real IBKR
-            print(f"Failed to connect to IBKR TWS: {e}")
-            self.notify_listeners_on_ibkr_connection_failed()
-            return False
-        return True
+
+        # ``ib_insync`` identifies clients by a small integer.  When one is
+        # already connected with the same ``clientId`` the TWS instance rejects
+        # subsequent connections with error 326.  To cope with lingering
+        # sessions, try a handful of different ids before giving up.
+        for attempt in range(5):
+            client_id = attempt + 1
+            try:
+                # ``ib_insync.IB.connect`` expects to run inside an asyncio
+                # event loop.  When this method is invoked from a background
+                # thread (e.g., via ``run_in_executor``) there is no running
+                # loop, which previously triggered ``RuntimeWarning: coroutine
+                # 'IB.connectAsync' was never awaited``.  Running the
+                # asynchronous variant inside ``asyncio.run`` ensures a
+                # temporary loop is created so the call succeeds regardless of
+                # the calling context.
+                asyncio.run(
+                    self.ibkr_client.connectAsync(
+                        "127.0.0.1", 7496, clientId=client_id
+                    )
+                )
+                print(
+                    "Connected to IBKR TWS: " + str(self.ibkr_client.isConnected())
+                )
+                if not self.ibkr_client.isConnected():
+                    raise RuntimeError("IBKR connection failed")
+                return True
+            except Exception as e:  # pragma: no cover - requires real IBKR
+                msg = str(e).lower()
+                if "client id is already in use" in msg and attempt < 4:
+                    print(
+                        f"Client ID {client_id} in use, retrying with a different id"
+                    )
+                    continue
+                print(f"Failed to connect to IBKR TWS: {e}")
+                break
+
+        self.notify_listeners_on_ibkr_connection_failed()
+        return False
 
     def disconnect_from_ibkr_tws(self):
         """Close the connection to IBKR if one is active.

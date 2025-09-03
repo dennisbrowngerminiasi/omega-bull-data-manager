@@ -3,6 +3,11 @@
 ## Objective
 Implement client-side support for the Omega Bull Data Manager's IBKR connection coordination API. Clients must synchronize usage of the single Trader Workstation (TWS) session by explicitly acquiring and releasing the connection before interacting with IBKR.
 
+The server will automatically retry its own IBKR connection with up to five
+different `clientId` values if the initially chosen identifier is already in
+use, but clients still need to coordinate using the API below to avoid
+conflicts.
+
 ## Endpoints
 The NDJSON server exposes two new request types over the existing TCP interface:
 

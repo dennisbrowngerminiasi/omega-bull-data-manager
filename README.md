@@ -63,6 +63,11 @@ session via a `release_ibkr` message with `{"status":"release_requested"}`.
 The client should respond with the usual `release_ibkr` request once its own
 IBKR session has been dropped so the server can retry the connection.
 
+To minimise conflicts from lingering sessions the data manager automatically
+retries the Trader Workstation connection with up to five different
+`clientId` values when it receives the "client id is already in use" error
+from IBKR.
+
 Before each download cycle the data manager verifies that it is still
 connected to Trader Workstation.  If the connection has been taken by another
 process it again triggers a `release_ibkr` request and skips the download
