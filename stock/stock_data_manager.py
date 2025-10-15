@@ -1,7 +1,10 @@
 import asyncio
-import time
+import csv
+import logging
 import random
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 # Hardcoded flag that allows developers to skip the expensive download path
 # and populate the system with random data instead.  This is useful when
@@ -18,6 +21,11 @@ else:  # Fallback placeholders when running in integration-test mode
     StockData = None
     EToroTickers = None
 
+from utils.paths import CSV_DATA_DIR
+
+
+logger = logging.getLogger(__name__)
+
 cur_date = datetime.now()
 start_date = (cur_date - timedelta(days=365)).strftime("%Y-%m-%d")
 cur_date_db = cur_date
@@ -31,6 +39,7 @@ class StockDataManager:
         self.stock_data_list = []
         self.stop_event = False
         self.is_downloading = False
+        self._offline_data_loaded = False
 
         self.sp500_tickers_list = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BRK.B", "NVDA", "UNH", "JNJ", "V",
@@ -48,6 +57,12 @@ class StockDataManager:
         else:  # pragma: no cover - requires external services
             self.etoro_tickers_list = EToroTickers().list
             self.ibkr_client = IB()
+
+        # Always attempt to hydrate from any locally cached CSVs before relying
+        # on live market data.  This enables an offline-first startup path and
+        # also seeds the manager with the full ticker universe discovered in the
+        # cache.
+        self.load_local_data()
 
 
     def connect_to_ibkr_tws(self):
@@ -116,6 +131,9 @@ class StockDataManager:
 
     def start_downloader_agent(self):
         print("Start downloader agent")
+        if INTEGRATION_TEST_MODE and self._offline_data_loaded:
+            logger.info("Offline cache loaded; skipping integration download")
+            return
         if INTEGRATION_TEST_MODE:
             self.notify_listeners_on_download_started()
             self.stock_data_list = self._generate_random_data()
@@ -190,6 +208,8 @@ class StockDataManager:
     def notify_listeners_on_download_finished(self):
         print("Notifying listeners on download finished")
         self.is_downloading = False
+        if self.stock_data_list:
+            self._offline_data_loaded = True
         for listener in self.scanner_listeners:
             listener.on_download_finished()
 
@@ -225,6 +245,74 @@ class StockDataManager:
             results.append(_RandomStockData(ticker, price, volume, date_str))
         return results
 
+    # ------------------------------------------------------------------
+    # Offline cache helpers
+    # ------------------------------------------------------------------
+    def load_local_data(self):
+        """Load cached stock data from CSV files if available."""
+
+        cached_data = []
+        try:
+            csv_dir = CSV_DATA_DIR
+            if not csv_dir.exists():
+                return []
+
+            for csv_file in sorted(csv_dir.glob("*.csv")):
+                ticker = csv_file.stem.upper()
+                try:
+                    cached_data.append(self._load_csv_stock_data(csv_file, ticker))
+                except Exception as csv_error:
+                    logger.warning(
+                        "Skipping cached data for %s due to error: %s",
+                        ticker,
+                        csv_error,
+                    )
+
+        finally:
+            if cached_data:
+                cache_tickers = {item.ticker for item in cached_data}
+                self.stock_data_list = cached_data
+                self._offline_data_loaded = True
+                # Ensure the cached tickers are part of the tracked universe so
+                # future downloads refresh them as well.
+                combined = list({*self.etoro_tickers_list, *cache_tickers})
+                combined.sort()
+                self.etoro_tickers_list = combined
+
+        return cached_data
+
+    def _load_csv_stock_data(self, csv_path: Path, ticker: str):
+        with csv_path.open("r", newline="") as handle:
+            reader = csv.DictReader(handle)
+            rows = []
+            for raw_row in reader:
+                if not raw_row:
+                    continue
+                try:
+                    row = {
+                        "Date": raw_row["Date"],
+                        "Open": float(raw_row["Open"]),
+                        "High": float(raw_row["High"]),
+                        "Low": float(raw_row["Low"]),
+                        "Close": float(raw_row["Close"]),
+                        "Volume": int(float(raw_row["Volume"]))
+                        if raw_row.get("Volume") not in (None, "")
+                        else 0,
+                    }
+                except (KeyError, ValueError) as err:
+                    raise ValueError(
+                        f"Malformed row in {csv_path.name}: {raw_row}"
+                    ) from err
+                rows.append(row)
+
+        if not rows:
+            raise ValueError(f"Cached CSV {csv_path.name} contained no data")
+
+        start_date = rows[0]["Date"]
+        end_date = rows[-1]["Date"]
+
+        return _CSVStockData(ticker, rows, start_date, end_date)
+
 
 class _RandomStockData:
     """Lightweight stock data holder used in integration-test mode."""
@@ -248,6 +336,25 @@ class _RandomStockData:
                     "Volume": volume,
                 }
             ],
+        }
+
+    def to_serializable_dict(self):
+        return self._data
+
+
+class _CSVStockData:
+    """Stock data backed by on-disk CSV caches."""
+
+    def __init__(self, ticker: str, rows, start_date: str, end_date: str):
+        self.ticker = ticker
+        self.df = None
+        self._data = {
+            "ticker": ticker,
+            "start_date": start_date,
+            "cur_date": end_date,
+            "end_date": end_date,
+            "period": "1 D",
+            "df": rows,
         }
 
     def to_serializable_dict(self):

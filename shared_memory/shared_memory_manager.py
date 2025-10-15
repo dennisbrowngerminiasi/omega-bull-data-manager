@@ -1,4 +1,3 @@
-from pathlib import Path
 import json
 import logging
 import os
@@ -9,10 +8,7 @@ from datetime import datetime
 from multiprocessing import shared_memory
 
 from stock.stock_data_interface import StockDataInterface
-
-
-CSV_DATA_DIR = Path(__file__).resolve().parent.parent / "shared_data_csv"
-CSV_DATA_DIR.mkdir(parents=True, exist_ok=True)
+from utils.paths import CSV_DATA_DIR
 
 
 class SharedMemoryManager(StockDataInterface):
@@ -49,6 +45,20 @@ class SharedMemoryManager(StockDataInterface):
         self.snapshot_state = {"epoch": 0, "last_update_ms": 0}
 
         self.writer_pid = os.getpid()
+
+        # Hydrate the in-memory structures from any cached CSV files before
+        # starting the downloader.  This allows the server to begin serving
+        # requests immediately in offline mode.
+        try:
+            cached_stock_data = self.stock_data_manager.load_local_data()
+        except AttributeError:
+            cached_stock_data = []
+        except Exception as load_error:
+            logging.error("Failed to load cached stock data: %s", load_error)
+            cached_stock_data = []
+
+        if cached_stock_data:
+            self.write_data(cached_stock_data)
 
         self.stock_data_manager.start_downloader_agent()
 
