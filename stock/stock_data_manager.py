@@ -68,6 +68,17 @@ class StockDataManager:
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
 
+        if INTEGRATION_TEST_MODE:
+            if self._offline_data_loaded:
+                logger.info(
+                    "Offline cache loaded; skipping IBKR connection in integration mode"
+                )
+            else:
+                logger.info(
+                    "Integration test mode active; no IBKR client available"
+                )
+            return False
+
         # ``ib_insync`` identifies clients by a small integer.  When one is
         # already connected with the same ``clientId`` the TWS instance rejects
         # subsequent connections with error 326.  To cope with lingering

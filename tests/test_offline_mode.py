@@ -43,3 +43,27 @@ def test_shared_memory_hydrates_from_cached_csv(monkeypatch, tmp_path):
     cached_entry = shared_dict["AAPL"]["data"]
     assert cached_entry["ticker"] == "AAPL"
     assert cached_entry["df"][0]["Close"] == 11.5
+
+
+def test_integration_mode_skips_ibkr_connection(monkeypatch, tmp_path, caplog):
+    monkeypatch.setattr(paths, "CSV_DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        "stock.stock_data_manager.CSV_DATA_DIR", tmp_path, raising=False
+    )
+
+    csv_path = tmp_path / "MSFT.csv"
+    with csv_path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Date", "Open", "High", "Low", "Close", "Volume"])
+        writer.writerow(["2024-02-01", 100.0, 110.0, 95.0, 105.0, 2000])
+
+    manager = StockDataManager()
+
+    with caplog.at_level("INFO"):
+        result = manager.connect_to_ibkr_tws()
+
+    assert result is False
+    assert any(
+        "skipping IBKR connection" in message.lower()
+        for message in caplog.messages
+    )
