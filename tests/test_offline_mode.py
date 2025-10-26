@@ -1,5 +1,7 @@
 import csv
 import sys
+import threading
+import time
 from pathlib import Path
 from threading import Lock
 
@@ -152,3 +154,37 @@ def test_reconcile_offline_cache_appends_missing_rows(monkeypatch, tmp_path, cap
     assert any(
         expected_log in message.lower() for message in caplog.messages
     ), caplog.messages
+
+
+def test_real_mode_downloader_runs_in_background(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths, "CSV_DATA_DIR", tmp_path)
+    monkeypatch.setattr(
+        "stock.stock_data_manager.CSV_DATA_DIR", tmp_path, raising=False
+    )
+
+    manager = StockDataManager()
+
+    # Simulate production mode after initialization by toggling the runtime flag
+    # and stubbing out the expensive download implementation.  This mirrors the
+    # behaviour in the live server where the downloader runs on a background
+    # thread while the main thread continues serving requests.
+    monkeypatch.setattr(
+        "stock.stock_data_manager.INTEGRATION_TEST_MODE", False, raising=False
+    )
+
+    start_event = threading.Event()
+
+    def _stub_downloader(periodicity):
+        start_event.set()
+        return
+
+    manager.downloader_agent = _stub_downloader
+
+    start = time.time()
+    manager.start_downloader_agent()
+    duration = time.time() - start
+
+    assert duration < 0.1, "Downloader should start asynchronously"
+    assert start_event.wait(1), "Background downloader thread did not run"
+
+    manager.stop_downloader_agent()

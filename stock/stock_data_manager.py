@@ -2,10 +2,11 @@ import asyncio
 import csv
 import logging
 import random
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 # Hardcoded flag that allows developers to skip the expensive download path
 # and populate the system with random data instead.  This is useful when
@@ -38,10 +39,11 @@ class StockDataManager:
     def __init__(self):
         self.scanner_listeners = []
         self.stock_data_list = []
-        self.stop_event = False
         self.is_downloading = False
         self._offline_data_loaded = False
         self._cached_ranges: Dict[str, Tuple[str, str]] = {}
+        self._stop_event = threading.Event()
+        self._downloader_thread: Optional[threading.Thread] = None
 
         self.sp500_tickers_list = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BRK.B", "NVDA", "UNH", "JNJ", "V",
@@ -160,16 +162,33 @@ class StockDataManager:
             self.stock_data_list = self._generate_random_data()
             self.notify_listeners_on_download_finished()
         else:
-            self.downloader_agent(60*60)
+            if self._downloader_thread and self._downloader_thread.is_alive():
+                logger.debug("Downloader agent already running; skipping restart")
+                return
+            self._stop_event.clear()
+            self._downloader_thread = threading.Thread(
+                target=self.downloader_agent,
+                name="stock-downloader",
+                args=(60 * 60,),
+                daemon=True,
+            )
+            self._downloader_thread.start()
 
     def stop_downloader_agent(self):
         print("Stop downloader agent")
-        self.stop_event = True
+        self._stop_event.set()
+        thread = self._downloader_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1)
+        if not thread or not thread.is_alive():
+            self._downloader_thread = None
 
     def downloader_agent(self, periodicity):
         print("Downloader agent started, periodicity: " + str(periodicity) + " seconds")
-        time.sleep(1)  # Optional startup delay
-        while not self.stop_event:
+        if self._stop_event.wait(1):
+            self._downloader_thread = None
+            return
+        while not self._stop_event.is_set():
             if not INTEGRATION_TEST_MODE:
                 # Ensure we hold a live IBKR connection before attempting the
                 # expensive download path.  If the connection is unavailable the
@@ -178,7 +197,8 @@ class StockDataManager:
                 if self.ibkr_client is None or not self.ibkr_client.isConnected():
                     if not self.connect_to_ibkr_tws():
                         print("Skipping download; IBKR not connected")
-                        time.sleep(periodicity)
+                        if self._stop_event.wait(periodicity):
+                            break
                         continue
 
             print("Downloading stock data")
@@ -188,12 +208,10 @@ class StockDataManager:
                 ibkr_client=self.ibkr_client
             )
             self.notify_listeners_on_download_finished()
-            self.stop_downloader_agent()  # run only once for now
+            self._stop_event.set()
+            break
 
-            for _ in range(periodicity):
-                time.sleep(1)
-                if self.stop_event:
-                    break
+        self._downloader_thread = None
 
     @staticmethod
     def download_stock_data(stock_symbols_list, ibkr_client):
