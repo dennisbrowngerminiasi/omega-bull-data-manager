@@ -378,6 +378,12 @@ class StockDataManager:
         try:
             updates: Dict[str, List[dict]] = {}
             for ticker, (start_date_str, end_date_str) in missing_ranges.items():
+                logger.info(
+                    "Downloading incremental data for %s from %s to %s",
+                    ticker,
+                    start_date_str,
+                    end_date_str,
+                )
                 stock_data = self._fetch_incremental_data(
                     ticker, start_date_str, end_date_str
                 )

@@ -81,7 +81,7 @@ def test_integration_mode_skips_ibkr_connection(monkeypatch, tmp_path, caplog):
     )
 
 
-def test_reconcile_offline_cache_appends_missing_rows(monkeypatch, tmp_path):
+def test_reconcile_offline_cache_appends_missing_rows(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(paths, "CSV_DATA_DIR", tmp_path)
     monkeypatch.setattr(
         "stock.stock_data_manager.CSV_DATA_DIR", tmp_path, raising=False
@@ -135,7 +135,8 @@ def test_reconcile_offline_cache_appends_missing_rows(monkeypatch, tmp_path):
 
     manager._fetch_incremental_data = lambda *args, **kwargs: _StubStockData("AAPL")
 
-    manager.reconcile_offline_cache()
+    with caplog.at_level("INFO"):
+        manager.reconcile_offline_cache()
 
     with csv_path.open("r", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -147,3 +148,7 @@ def test_reconcile_offline_cache_appends_missing_rows(monkeypatch, tmp_path):
 
     cached_entries = manager.get_all_stock_data()
     assert cached_entries[0]._data["df"][-1]["Date"] == "2024-01-02"
+    expected_log = "downloading incremental data for aapl from 2024-01-02 to 2024-01-02"
+    assert any(
+        expected_log in message.lower() for message in caplog.messages
+    ), caplog.messages
