@@ -1,7 +1,12 @@
 import asyncio
-import time
+import csv
+import logging
 import random
+import threading
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional, Tuple
 
 # Hardcoded flag that allows developers to skip the expensive download path
 # and populate the system with random data instead.  This is useful when
@@ -18,6 +23,11 @@ else:  # Fallback placeholders when running in integration-test mode
     StockData = None
     EToroTickers = None
 
+from utils.paths import CSV_DATA_DIR
+
+
+logger = logging.getLogger(__name__)
+
 cur_date = datetime.now()
 start_date = (cur_date - timedelta(days=365)).strftime("%Y-%m-%d")
 cur_date_db = cur_date
@@ -29,8 +39,11 @@ class StockDataManager:
     def __init__(self):
         self.scanner_listeners = []
         self.stock_data_list = []
-        self.stop_event = False
         self.is_downloading = False
+        self._offline_data_loaded = False
+        self._cached_ranges: Dict[str, Tuple[str, str]] = {}
+        self._stop_event = threading.Event()
+        self._downloader_thread: Optional[threading.Thread] = None
 
         self.sp500_tickers_list = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BRK.B", "NVDA", "UNH", "JNJ", "V",
@@ -49,9 +62,26 @@ class StockDataManager:
             self.etoro_tickers_list = EToroTickers().list
             self.ibkr_client = IB()
 
+        # Always attempt to hydrate from any locally cached CSVs before relying
+        # on live market data.  This enables an offline-first startup path and
+        # also seeds the manager with the full ticker universe discovered in the
+        # cache.
+        self.load_local_data()
+
 
     def connect_to_ibkr_tws(self):
         print("Connecting to IBKR TWS")
+
+        if INTEGRATION_TEST_MODE:
+            if self._offline_data_loaded:
+                logger.info(
+                    "Offline cache loaded; skipping IBKR connection in integration mode"
+                )
+            else:
+                logger.info(
+                    "Integration test mode active; no IBKR client available"
+                )
+            return False
 
         # ``ib_insync`` identifies clients by a small integer.  When one is
         # already connected with the same ``clientId`` the TWS instance rejects
@@ -116,21 +146,49 @@ class StockDataManager:
 
     def start_downloader_agent(self):
         print("Start downloader agent")
+        if self._offline_data_loaded:
+            try:
+                self.reconcile_offline_cache()
+            except Exception as reconcile_error:
+                logger.error(
+                    "Failed to reconcile offline cache before downloader start: %s",
+                    reconcile_error,
+                )
+        if INTEGRATION_TEST_MODE and self._offline_data_loaded:
+            logger.info("Offline cache loaded; skipping integration download")
+            return
         if INTEGRATION_TEST_MODE:
             self.notify_listeners_on_download_started()
             self.stock_data_list = self._generate_random_data()
             self.notify_listeners_on_download_finished()
         else:
-            self.downloader_agent(60*60)
+            if self._downloader_thread and self._downloader_thread.is_alive():
+                logger.debug("Downloader agent already running; skipping restart")
+                return
+            self._stop_event.clear()
+            self._downloader_thread = threading.Thread(
+                target=self.downloader_agent,
+                name="stock-downloader",
+                args=(60 * 60,),
+                daemon=True,
+            )
+            self._downloader_thread.start()
 
     def stop_downloader_agent(self):
         print("Stop downloader agent")
-        self.stop_event = True
+        self._stop_event.set()
+        thread = self._downloader_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=1)
+        if not thread or not thread.is_alive():
+            self._downloader_thread = None
 
     def downloader_agent(self, periodicity):
         print("Downloader agent started, periodicity: " + str(periodicity) + " seconds")
-        time.sleep(1)  # Optional startup delay
-        while not self.stop_event:
+        if self._stop_event.wait(1):
+            self._downloader_thread = None
+            return
+        while not self._stop_event.is_set():
             if not INTEGRATION_TEST_MODE:
                 # Ensure we hold a live IBKR connection before attempting the
                 # expensive download path.  If the connection is unavailable the
@@ -139,7 +197,8 @@ class StockDataManager:
                 if self.ibkr_client is None or not self.ibkr_client.isConnected():
                     if not self.connect_to_ibkr_tws():
                         print("Skipping download; IBKR not connected")
-                        time.sleep(periodicity)
+                        if self._stop_event.wait(periodicity):
+                            break
                         continue
 
             print("Downloading stock data")
@@ -149,12 +208,10 @@ class StockDataManager:
                 ibkr_client=self.ibkr_client
             )
             self.notify_listeners_on_download_finished()
-            self.stop_downloader_agent()  # run only once for now
+            self._stop_event.set()
+            break
 
-            for _ in range(periodicity):
-                time.sleep(1)
-                if self.stop_event:
-                    break
+        self._downloader_thread = None
 
     @staticmethod
     def download_stock_data(stock_symbols_list, ibkr_client):
@@ -190,6 +247,8 @@ class StockDataManager:
     def notify_listeners_on_download_finished(self):
         print("Notifying listeners on download finished")
         self.is_downloading = False
+        if self.stock_data_list:
+            self._offline_data_loaded = True
         for listener in self.scanner_listeners:
             listener.on_download_finished()
 
@@ -225,6 +284,266 @@ class StockDataManager:
             results.append(_RandomStockData(ticker, price, volume, date_str))
         return results
 
+    # ------------------------------------------------------------------
+    # Offline cache helpers
+    # ------------------------------------------------------------------
+    def load_local_data(self):
+        """Load cached stock data from CSV files if available."""
+
+        cached_data = []
+        try:
+            csv_dir = CSV_DATA_DIR
+            if not csv_dir.exists():
+                return []
+
+            self._cached_ranges.clear()
+            for csv_file in sorted(csv_dir.glob("*.csv")):
+                ticker = csv_file.stem.upper()
+                try:
+                    cached_entry = self._load_csv_stock_data(csv_file, ticker)
+                    cached_data.append(cached_entry)
+                    self._cached_ranges[ticker] = (
+                        cached_entry._data["start_date"],
+                        cached_entry._data["end_date"],
+                    )
+                except Exception as csv_error:
+                    logger.warning(
+                        "Skipping cached data for %s due to error: %s",
+                        ticker,
+                        csv_error,
+                    )
+
+        finally:
+            if cached_data:
+                cache_tickers = {item.ticker for item in cached_data}
+                self.stock_data_list = cached_data
+                self._offline_data_loaded = True
+                # Ensure the cached tickers are part of the tracked universe so
+                # future downloads refresh them as well.
+                combined = list({*self.etoro_tickers_list, *cache_tickers})
+                combined.sort()
+                self.etoro_tickers_list = combined
+
+        return cached_data
+
+    def _load_csv_stock_data(self, csv_path: Path, ticker: str):
+        with csv_path.open("r", newline="") as handle:
+            reader = csv.DictReader(handle)
+            rows = []
+            for raw_row in reader:
+                if not raw_row:
+                    continue
+                try:
+                    row = {
+                        "Date": raw_row["Date"],
+                        "Open": float(raw_row["Open"]),
+                        "High": float(raw_row["High"]),
+                        "Low": float(raw_row["Low"]),
+                        "Close": float(raw_row["Close"]),
+                        "Volume": int(float(raw_row["Volume"]))
+                        if raw_row.get("Volume") not in (None, "")
+                        else 0,
+                    }
+                except (KeyError, ValueError) as err:
+                    raise ValueError(
+                        f"Malformed row in {csv_path.name}: {raw_row}"
+                    ) from err
+                rows.append(row)
+
+        if not rows:
+            raise ValueError(f"Cached CSV {csv_path.name} contained no data")
+
+        start_date = rows[0]["Date"]
+        end_date = rows[-1]["Date"]
+
+        return _CSVStockData(ticker, rows, start_date, end_date)
+
+    # ------------------------------------------------------------------
+    # Offline reconciliation helpers
+    # ------------------------------------------------------------------
+    def reconcile_offline_cache(self) -> None:
+        """Download and merge any historical data missing from the cache.
+
+        When the manager is hydrated from CSV files it may lag behind the live
+        market data by a few days.  This method determines which tickers require
+        updates, fetches only the missing range for each one and persists the
+        merged result back to disk so subsequent offline startups remain fast.
+        """
+
+        if not self._offline_data_loaded:
+            logger.debug("No offline cache loaded; skipping reconciliation")
+            return
+
+        missing_ranges = self._determine_missing_ranges()
+        if not missing_ranges:
+            logger.info("Offline cache already up to date; no reconciliation needed")
+            return
+
+        if INTEGRATION_TEST_MODE:
+            logger.info(
+                "Integration test mode active; skipping provider reconciliation"
+            )
+            return
+
+        if self.ibkr_client is None or not self.ibkr_client.isConnected():
+            if not self.connect_to_ibkr_tws():
+                logger.warning(
+                    "Unable to reconcile offline cache because IBKR connection is unavailable"
+                )
+                return
+
+        self.notify_listeners_on_download_started()
+        try:
+            updates: Dict[str, List[dict]] = {}
+            for ticker, (start_date_str, end_date_str) in missing_ranges.items():
+                logger.info(
+                    "Downloading incremental data for %s from %s to %s",
+                    ticker,
+                    start_date_str,
+                    end_date_str,
+                )
+                stock_data = self._fetch_incremental_data(
+                    ticker, start_date_str, end_date_str
+                )
+                if stock_data is None:
+                    continue
+                if getattr(stock_data, "is_data_empty", lambda: False)():
+                    continue
+                to_dict = stock_data.to_serializable_dict()
+                rows = to_dict.get("df") or []
+                if not rows:
+                    continue
+                updates[ticker] = rows
+
+            if updates:
+                self._merge_incremental_rows(updates)
+        finally:
+            self.notify_listeners_on_download_finished()
+
+    def _determine_missing_ranges(self) -> Dict[str, Tuple[str, str]]:
+        """Return the date ranges that require refreshing per ticker."""
+
+        if not self.stock_data_list:
+            return {}
+
+        today = datetime.utcnow().date()
+        if not self._cached_ranges:
+            # Build ranges lazily if ``load_local_data`` was bypassed.
+            for entry in self.stock_data_list:
+                data = getattr(entry, "_data", None)
+                if not data:
+                    to_dict = getattr(entry, "to_serializable_dict", None)
+                    if to_dict is None:
+                        continue
+                    data = to_dict()
+                df_rows = data.get("df") or []
+                if not df_rows:
+                    continue
+                self._cached_ranges[entry.ticker] = (
+                    data.get("start_date", df_rows[0]["Date"]),
+                    data.get("end_date", df_rows[-1]["Date"]),
+                )
+
+        ranges: Dict[str, Tuple[str, str]] = {}
+        for ticker, (_, end_date_str) in self._cached_ranges.items():
+            try:
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                logger.warning(
+                    "Cached end date '%s' for %s is invalid; forcing full refresh",
+                    end_date_str,
+                    ticker,
+                )
+                ranges[ticker] = (
+                    (today - timedelta(days=365)).strftime("%Y-%m-%d"),
+                    today.strftime("%Y-%m-%d"),
+                )
+                continue
+
+            if end_date >= today:
+                continue
+
+            missing_start = end_date + timedelta(days=1)
+            if missing_start > today:
+                continue
+
+            ranges[ticker] = (
+                missing_start.strftime("%Y-%m-%d"),
+                today.strftime("%Y-%m-%d"),
+            )
+
+        return ranges
+
+    def _fetch_incremental_data(
+        self, ticker: str, start_date: str, end_date: str
+    ):
+        """Fetch incremental data for ``ticker`` between the supplied dates."""
+
+        return StockData(
+            start_date,
+            end_date,
+            end_date,
+            period,
+            ticker,
+            self.ibkr_client,
+        )
+
+    def _merge_incremental_rows(self, updates: Dict[str, List[dict]]) -> None:
+        """Merge provider updates with the cached CSV payloads."""
+
+        current_entries: Dict[str, _CSVStockData] = {
+            entry.ticker: entry
+            for entry in self.stock_data_list
+            if isinstance(entry, _CSVStockData)
+        }
+
+        for ticker, rows in updates.items():
+            existing = current_entries.get(ticker)
+            if existing is None:
+                start_date = rows[0]["Date"]
+                end_date = rows[-1]["Date"]
+                merged_rows = list(rows)
+                updated_entry = _CSVStockData(ticker, merged_rows, start_date, end_date)
+            else:
+                merged_rows = self._merge_rows(existing._data["df"], rows)
+                start_date = merged_rows[0]["Date"]
+                end_date = merged_rows[-1]["Date"]
+                existing._data["df"] = merged_rows
+                existing._data["start_date"] = start_date
+                existing._data["cur_date"] = end_date
+                existing._data["end_date"] = end_date
+                updated_entry = existing
+
+            self._persist_csv_rows(ticker, merged_rows)
+            self._cached_ranges[ticker] = (start_date, end_date)
+            current_entries[ticker] = updated_entry
+
+        merged_list = list(current_entries.values())
+        merged_list.sort(key=lambda entry: entry.ticker)
+        self.stock_data_list = merged_list
+
+    @staticmethod
+    def _merge_rows(existing_rows: Iterable[dict], new_rows: Iterable[dict]) -> List[dict]:
+        """Deduplicate and chronologically order cached and provider rows."""
+
+        merged: Dict[str, dict] = {}
+        for row in existing_rows:
+            merged[row["Date"]] = row
+        for row in new_rows:
+            merged[row["Date"]] = row
+
+        return [merged[date] for date in sorted(merged.keys())]
+
+    def _persist_csv_rows(self, ticker: str, rows: List[dict]) -> None:
+        """Write the merged dataset for ``ticker`` back to the CSV cache."""
+
+        csv_path = CSV_DATA_DIR / f"{ticker}.csv"
+        fieldnames = ["Date", "Open", "High", "Low", "Close", "Volume"]
+        with csv_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+
 
 class _RandomStockData:
     """Lightweight stock data holder used in integration-test mode."""
@@ -248,6 +567,25 @@ class _RandomStockData:
                     "Volume": volume,
                 }
             ],
+        }
+
+    def to_serializable_dict(self):
+        return self._data
+
+
+class _CSVStockData:
+    """Stock data backed by on-disk CSV caches."""
+
+    def __init__(self, ticker: str, rows, start_date: str, end_date: str):
+        self.ticker = ticker
+        self.df = None
+        self._data = {
+            "ticker": ticker,
+            "start_date": start_date,
+            "cur_date": end_date,
+            "end_date": end_date,
+            "period": "1 D",
+            "df": rows,
         }
 
     def to_serializable_dict(self):
