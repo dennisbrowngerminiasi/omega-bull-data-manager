@@ -5,6 +5,7 @@ import random
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
 
 # Hardcoded flag that allows developers to skip the expensive download path
 # and populate the system with random data instead.  This is useful when
@@ -40,6 +41,7 @@ class StockDataManager:
         self.stop_event = False
         self.is_downloading = False
         self._offline_data_loaded = False
+        self._cached_ranges: Dict[str, Tuple[str, str]] = {}
 
         self.sp500_tickers_list = [
             "AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "BRK.B", "NVDA", "UNH", "JNJ", "V",
@@ -142,6 +144,14 @@ class StockDataManager:
 
     def start_downloader_agent(self):
         print("Start downloader agent")
+        if self._offline_data_loaded:
+            try:
+                self.reconcile_offline_cache()
+            except Exception as reconcile_error:
+                logger.error(
+                    "Failed to reconcile offline cache before downloader start: %s",
+                    reconcile_error,
+                )
         if INTEGRATION_TEST_MODE and self._offline_data_loaded:
             logger.info("Offline cache loaded; skipping integration download")
             return
@@ -268,10 +278,16 @@ class StockDataManager:
             if not csv_dir.exists():
                 return []
 
+            self._cached_ranges.clear()
             for csv_file in sorted(csv_dir.glob("*.csv")):
                 ticker = csv_file.stem.upper()
                 try:
-                    cached_data.append(self._load_csv_stock_data(csv_file, ticker))
+                    cached_entry = self._load_csv_stock_data(csv_file, ticker)
+                    cached_data.append(cached_entry)
+                    self._cached_ranges[ticker] = (
+                        cached_entry._data["start_date"],
+                        cached_entry._data["end_date"],
+                    )
                 except Exception as csv_error:
                     logger.warning(
                         "Skipping cached data for %s due to error: %s",
@@ -323,6 +339,186 @@ class StockDataManager:
         end_date = rows[-1]["Date"]
 
         return _CSVStockData(ticker, rows, start_date, end_date)
+
+    # ------------------------------------------------------------------
+    # Offline reconciliation helpers
+    # ------------------------------------------------------------------
+    def reconcile_offline_cache(self) -> None:
+        """Download and merge any historical data missing from the cache.
+
+        When the manager is hydrated from CSV files it may lag behind the live
+        market data by a few days.  This method determines which tickers require
+        updates, fetches only the missing range for each one and persists the
+        merged result back to disk so subsequent offline startups remain fast.
+        """
+
+        if not self._offline_data_loaded:
+            logger.debug("No offline cache loaded; skipping reconciliation")
+            return
+
+        missing_ranges = self._determine_missing_ranges()
+        if not missing_ranges:
+            logger.info("Offline cache already up to date; no reconciliation needed")
+            return
+
+        if INTEGRATION_TEST_MODE:
+            logger.info(
+                "Integration test mode active; skipping provider reconciliation"
+            )
+            return
+
+        if self.ibkr_client is None or not self.ibkr_client.isConnected():
+            if not self.connect_to_ibkr_tws():
+                logger.warning(
+                    "Unable to reconcile offline cache because IBKR connection is unavailable"
+                )
+                return
+
+        self.notify_listeners_on_download_started()
+        try:
+            updates: Dict[str, List[dict]] = {}
+            for ticker, (start_date_str, end_date_str) in missing_ranges.items():
+                stock_data = self._fetch_incremental_data(
+                    ticker, start_date_str, end_date_str
+                )
+                if stock_data is None:
+                    continue
+                if getattr(stock_data, "is_data_empty", lambda: False)():
+                    continue
+                to_dict = stock_data.to_serializable_dict()
+                rows = to_dict.get("df") or []
+                if not rows:
+                    continue
+                updates[ticker] = rows
+
+            if updates:
+                self._merge_incremental_rows(updates)
+        finally:
+            self.notify_listeners_on_download_finished()
+
+    def _determine_missing_ranges(self) -> Dict[str, Tuple[str, str]]:
+        """Return the date ranges that require refreshing per ticker."""
+
+        if not self.stock_data_list:
+            return {}
+
+        today = datetime.utcnow().date()
+        if not self._cached_ranges:
+            # Build ranges lazily if ``load_local_data`` was bypassed.
+            for entry in self.stock_data_list:
+                data = getattr(entry, "_data", None)
+                if not data:
+                    to_dict = getattr(entry, "to_serializable_dict", None)
+                    if to_dict is None:
+                        continue
+                    data = to_dict()
+                df_rows = data.get("df") or []
+                if not df_rows:
+                    continue
+                self._cached_ranges[entry.ticker] = (
+                    data.get("start_date", df_rows[0]["Date"]),
+                    data.get("end_date", df_rows[-1]["Date"]),
+                )
+
+        ranges: Dict[str, Tuple[str, str]] = {}
+        for ticker, (_, end_date_str) in self._cached_ranges.items():
+            try:
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                logger.warning(
+                    "Cached end date '%s' for %s is invalid; forcing full refresh",
+                    end_date_str,
+                    ticker,
+                )
+                ranges[ticker] = (
+                    (today - timedelta(days=365)).strftime("%Y-%m-%d"),
+                    today.strftime("%Y-%m-%d"),
+                )
+                continue
+
+            if end_date >= today:
+                continue
+
+            missing_start = end_date + timedelta(days=1)
+            if missing_start > today:
+                continue
+
+            ranges[ticker] = (
+                missing_start.strftime("%Y-%m-%d"),
+                today.strftime("%Y-%m-%d"),
+            )
+
+        return ranges
+
+    def _fetch_incremental_data(
+        self, ticker: str, start_date: str, end_date: str
+    ):
+        """Fetch incremental data for ``ticker`` between the supplied dates."""
+
+        return StockData(
+            start_date,
+            end_date,
+            end_date,
+            period,
+            ticker,
+            self.ibkr_client,
+        )
+
+    def _merge_incremental_rows(self, updates: Dict[str, List[dict]]) -> None:
+        """Merge provider updates with the cached CSV payloads."""
+
+        current_entries: Dict[str, _CSVStockData] = {
+            entry.ticker: entry
+            for entry in self.stock_data_list
+            if isinstance(entry, _CSVStockData)
+        }
+
+        for ticker, rows in updates.items():
+            existing = current_entries.get(ticker)
+            if existing is None:
+                start_date = rows[0]["Date"]
+                end_date = rows[-1]["Date"]
+                merged_rows = list(rows)
+                updated_entry = _CSVStockData(ticker, merged_rows, start_date, end_date)
+            else:
+                merged_rows = self._merge_rows(existing._data["df"], rows)
+                start_date = merged_rows[0]["Date"]
+                end_date = merged_rows[-1]["Date"]
+                existing._data["df"] = merged_rows
+                existing._data["start_date"] = start_date
+                existing._data["cur_date"] = end_date
+                existing._data["end_date"] = end_date
+                updated_entry = existing
+
+            self._persist_csv_rows(ticker, merged_rows)
+            self._cached_ranges[ticker] = (start_date, end_date)
+            current_entries[ticker] = updated_entry
+
+        merged_list = list(current_entries.values())
+        merged_list.sort(key=lambda entry: entry.ticker)
+        self.stock_data_list = merged_list
+
+    @staticmethod
+    def _merge_rows(existing_rows: Iterable[dict], new_rows: Iterable[dict]) -> List[dict]:
+        """Deduplicate and chronologically order cached and provider rows."""
+
+        merged: Dict[str, dict] = {}
+        for row in existing_rows:
+            merged[row["Date"]] = row
+        for row in new_rows:
+            merged[row["Date"]] = row
+
+        return [merged[date] for date in sorted(merged.keys())]
+
+    def _persist_csv_rows(self, ticker: str, rows: List[dict]) -> None:
+        """Write the merged dataset for ``ticker`` back to the CSV cache."""
+
+        csv_path = CSV_DATA_DIR / f"{ticker}.csv"
+        fieldnames = ["Date", "Open", "High", "Low", "Close", "Volume"]
+        with csv_path.open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
 
 
 class _RandomStockData:

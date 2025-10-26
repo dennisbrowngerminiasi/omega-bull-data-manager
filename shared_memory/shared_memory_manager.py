@@ -59,6 +59,17 @@ class SharedMemoryManager(StockDataInterface):
 
         if cached_stock_data:
             self.write_data(cached_stock_data)
+            try:
+                self.stock_data_manager.reconcile_offline_cache()
+            except AttributeError:
+                logging.debug(
+                    "Stock data manager does not expose offline reconciliation"
+                )
+            except Exception as reconcile_error:
+                logging.error(
+                    "Failed to reconcile offline cache against provider: %s",
+                    reconcile_error,
+                )
 
         self.stock_data_manager.start_downloader_agent()
 
